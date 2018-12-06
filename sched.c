@@ -216,6 +216,10 @@ int sys_change(int val){
 }
 
 int sys_get_policy(pid_t pid){
+	task_t* pcb = find_task_by_pid(pid);
+	if(!pcb){
+		return -ESRCH;
+	}
 	int is_changeable = sys_is_changeable(pid);
 	if(is_changeable == 1)
 		return enable_changeable;
