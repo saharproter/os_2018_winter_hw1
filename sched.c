@@ -235,7 +235,7 @@ int sys_get_policy(pid_t pid){
 int is_min_pid(pid_t pid){
     struct list_head *pos;
     listNode* tmp;
-    pid_t min = &pid;
+    pid_t min = pid;
     list_for_each(pos , &changeables_list){
         tmp = list_entry(pos, listNode, node);
         if(min > tmp->pid)
