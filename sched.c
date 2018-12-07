@@ -157,7 +157,8 @@ struct listNode {
 
 int enable_changeable = 0;	//if changeable policy is on
 list_t changeables_list;
-INIT_LIST_HEAD(&(changeables_list));
+int first_make_changeable = 0;
+
 
 /*
  * functions
@@ -179,6 +180,11 @@ int sys_is_changeable(pid_t pid){
 int sys_make_changeable(pid_t pid){
 	rq=this_rq();
 	spin_lock_irq(rq);
+
+    if(first_make_changeable == 0){
+        first_make_changeable = 1;
+        INIT_LIST_HEAD(&(changeables_list));
+    }
 
 	task_t* pcb = find_task_by_pid(pid);
 	if(!pcb){
@@ -216,14 +222,26 @@ int sys_change(int val){
 }
 
 int sys_get_policy(pid_t pid){
-	task_t* pcb = find_task_by_pid(pid);
-	if(!pcb){
-		return -ESRCH;
-	}
+    task_t* pcb = find_task_by_pid(pid);
+    if(!pcb){
+        return -ESRCH;
+    }
 	int is_changeable = sys_is_changeable(pid);
 	if(is_changeable == 1)
 		return enable_changeable;
 	return is_changeable;
+}
+
+int is_min_pid(pid_t pid){
+    struct list_head *pos;
+    listNode* tmp;
+    pid_t min = &pid;
+    list_for_each(pos , &changeables_list){
+        tmp = list_entry(pos, listNode, node);
+        if(min > tmp->pid)
+            min = tmp->pid;
+    }
+    return (pid == min);
 }
 
 ///-----------end of lines----------///////
@@ -1249,7 +1267,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	else {
 		retval = -EINVAL;
 		if (policy != SCHED_FIFO && policy != SCHED_RR &&
-				policy != SCHED_OTHER)
+                (policy != SCHED_OTHER || policy != SCHED_CHANGEABLE))
 			goto out_unlock;
 	}
 
@@ -1260,7 +1278,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	retval = -EINVAL;
 	if (lp.sched_priority < 0 || lp.sched_priority > MAX_USER_RT_PRIO-1)
 		goto out_unlock;
-	if ((policy == SCHED_OTHER) != (lp.sched_priority == 0))
+	if ((policy == SCHED_OTHER || policy == SCHED_CHANGEABLE) != (lp.sched_priority == 0))
 		goto out_unlock;
 
 	retval = -EPERM;
@@ -1277,7 +1295,7 @@ static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 	retval = 0;
 	p->policy = policy;
 	p->rt_priority = lp.sched_priority;
-	if (policy != SCHED_OTHER)
+	if (policy != SCHED_OTHER || policy != SCHED_CHANGEABLE)
 		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
 	else
 		p->prio = p->static_prio;
@@ -1501,6 +1519,9 @@ asmlinkage long sys_sched_get_priority_max(int policy)
 	case SCHED_OTHER:
 		ret = 0;
 		break;
+    case SCHED_CHANGEABLE:
+        ret = 0;
+        break;
 	}
 	return ret;
 }
@@ -1514,6 +1535,9 @@ asmlinkage long sys_sched_get_priority_min(int policy)
 	case SCHED_RR:
 		ret = 1;
 		break;
+    case SCHED_CHANGEABLE:
+        ret = 0;
+        break;
 	case SCHED_OTHER:
 		ret = 0;
 	}
