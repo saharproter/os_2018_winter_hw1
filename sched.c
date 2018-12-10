@@ -146,106 +146,6 @@ struct runqueue {
 
 static struct runqueue runqueues[NR_CPUS] __cacheline_aligned;
 
-///-----------added lines----------///////
-
-
-
-struct listNode {
-	pid_t pid;
-	list_t node;
-};
-
-int enable_changeable = 0;	//if changeable policy is on
-list_t changeables_list;
-int first_make_changeable = 0;
-
-
-/*
- * functions
- */
-
-int sys_is_changeable(pid_t pid){
-	if(pid<0){
-		return -ESRCH;
-	}
-	task_t* pcb = find_task_by_pid(pid);
-	if(!pcb){
-		return -ESRCH;
-	}
-	if(pcb->policy == SCHED_CHANGEABLE)
-		return 1;
-	return 0;
-}
-
-int sys_make_changeable(pid_t pid){
-	rq=this_rq();
-	spin_lock_irq(rq);
-
-    if(first_make_changeable == 0){
-        first_make_changeable = 1;
-        INIT_LIST_HEAD(&(changeables_list));
-    }
-
-	task_t* pcb = find_task_by_pid(pid);
-	if(!pcb){
-		return -ESRCH;
-	}
-	if(current->policy == SCHED_CHANGEABLE || sys_is_changeable(pid)){
-		return -EINVAL;
-	}
-	pcb->policy = SCHED_CHANGEABLE;
-	//insert pid to changeables pid list
-	struct listNode* tmp;
-	tmp = (struct listNode*)kmalloc(sizeof(struct listNode) , GFP_KERNEL);
-	tmp->pid = pid;
-	list_add_tail(&(tmp->node) , &(changeables_list));
-	//TODO: take care of edge cases
-
-	spin_unlock_irq(rq);
-	return 0;
-}
-
-int sys_change(int val){
-	rq=this_rq();
-	spin_lock_irq(rq);
-
-	if(val != 1 && val != 0)
-		return -EINVAL;
-	if(val == 1)
-		enable_changeable = 1;
-	else
-		enable_changeable = 0;
-	//TODO: take care of edge cases
-
-	spin_unlock_irq(rq);
-	return 0;
-}
-
-int sys_get_policy(pid_t pid){
-    task_t* pcb = find_task_by_pid(pid);
-    if(!pcb){
-        return -ESRCH;
-    }
-	int is_changeable = sys_is_changeable(pid);
-	if(is_changeable == 1)
-		return enable_changeable;
-	return is_changeable;
-}
-
-int is_min_pid(pid_t pid){
-    struct list_head *pos;
-    listNode* tmp;
-    pid_t min = pid;
-    list_for_each(pos , &changeables_list){
-        tmp = list_entry(pos, listNode, node);
-        if(min > tmp->pid)
-            min = tmp->pid;
-    }
-    return (pid == min);
-}
-
-///-----------end of lines----------///////
-
 #define cpu_rq(cpu)		(runqueues + (cpu))
 #define this_rq()		cpu_rq(smp_processor_id())
 #define task_rq(p)		cpu_rq((p)->cpu)
@@ -261,6 +161,108 @@ int is_min_pid(pid_t pid){
 # define prepare_arch_switch(rq)	do { } while(0)
 # define finish_arch_switch(rq)		spin_unlock_irq(&(rq)->lock)
 #endif
+
+
+///-----------added lines----------///////
+
+
+
+struct listNode {
+    pid_t pid;
+    list_t node;
+};
+
+int enable_changeable = 0;	//if changeable policy is on
+list_t changeables_list;
+int first_make_changeable = 0;
+
+
+/*
+ * functions
+ */
+
+int sys_is_changeable(pid_t pid){
+    if(pid<0){
+        return -ESRCH;
+    }
+    task_t* pcb = find_task_by_pid(pid);
+    if(!pcb){
+        return -ESRCH;
+    }
+    if(pcb->policy == SCHED_CHANGEABLE)
+        return 1;
+    return 0;
+}
+
+int sys_make_changeable(pid_t pid){
+    runqueue_t *rq=this_rq();
+    spin_lock_irq(rq);
+
+    if(first_make_changeable == 0){
+        first_make_changeable = 1;
+        INIT_LIST_HEAD(&(changeables_list));
+    }
+
+    task_t* pcb = find_task_by_pid(pid);
+    if(!pcb){
+        return -ESRCH;
+    }
+    if(current->policy == SCHED_CHANGEABLE || sys_is_changeable(pid)){
+        return -EINVAL;
+    }
+    pcb->policy = SCHED_CHANGEABLE;
+    //insert pid to changeables pid list
+    struct listNode* tmp;
+    tmp = (struct listNode*)kmalloc(sizeof(struct listNode) , GFP_KERNEL);
+    tmp->pid = pid;
+    list_add_tail(&(tmp->node) , &(changeables_list));
+    //TODO: take care of edge cases
+
+    spin_unlock_irq(rq);
+    return 0;
+}
+
+int sys_change(int val){
+    runqueue_t *rq=this_rq();
+    spin_lock_irq(rq);
+
+    if(val != 1 && val != 0)
+        return -EINVAL;
+    if(val == 1)
+        enable_changeable = 1;
+    else
+        enable_changeable = 0;
+    //TODO: take care of edge cases
+
+    spin_unlock_irq(rq);
+    return 0;
+}
+
+int sys_get_policy(pid_t pid){
+    task_t* pcb = find_task_by_pid(pid);
+    if(!pcb){
+        return -ESRCH;
+    }
+    int is_changeable = sys_is_changeable(pid);
+    if(is_changeable == 1)
+        return enable_changeable;
+    return -EINVAL;
+}
+
+int is_min_pid(pid_t pid){
+    struct list_head *pos;
+    struct listNode* tmp;
+    pid_t min = pid;
+    list_for_each(pos , &changeables_list){
+        tmp = list_entry(pos, struct listNode, pid);
+        if(min > tmp->pid)
+            min = tmp->pid;
+    }
+    return (pid == min);
+}
+
+///-----------end of lines----------///////
+
 
 /*
  * task_rq_lock - lock the runqueue a given task resides on and disable
