@@ -723,9 +723,17 @@ int do_fork(unsigned long clone_flags, unsigned long stack_start,
 	 */
 	__save_flags(flags);
 	__cli();
-	if (!current->time_slice)
+	//CHANGED FROM HERE
+	if (current->policy != SCHED_CHANGABLE && !current->time_slice)
 		BUG();
-	p->time_slice = (current->time_slice + 1) >> 1;
+	if (current->policy == SCHED_CHANGABLE){
+		p->policy = SCHED_CHANGABLE;
+		p->time_slice = (current->time_slice) >> 1 + current->time_slice % 2;
+	}
+	else{
+		p->time_slice = (current->time_slice + 1) >> 1;
+	}
+	//TILL HERE
 	p->first_time_slice = 1;
 	current->time_slice >>= 1;
 	p->sleep_timestamp = jiffies;
