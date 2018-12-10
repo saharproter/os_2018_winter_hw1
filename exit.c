@@ -525,13 +525,16 @@ fake_volatile:
 	put_exec_domain(tsk->exec_domain);
 	if (tsk->binfmt && tsk->binfmt->module)
 		__MOD_DEC_USE_COUNT(tsk->binfmt->module);
-	
+	//??????
 	if(tsk->policy == SCHED_CHANGEABLE){
 		//need to remove from changeables list
 		list_for_each(pos , &changeables_list){
-			
+			if(pos-> == tsk->){
+				list_del(pos);
+			}
 		}
 	}
+	//?????
 	tsk->exit_code = code;
 	exit_notify();
 	schedule();
