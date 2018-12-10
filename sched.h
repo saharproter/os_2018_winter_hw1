@@ -342,6 +342,9 @@ struct task_struct {
 	unsigned int cpu;
 	int prio, static_prio;
 	list_t run_list;
+	///-------------hw2------------
+	list_t run_list_sc;
+	///--------------hw2----------
 	prio_array_t *array;
 
 	unsigned long sleep_avg;
