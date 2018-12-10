@@ -163,7 +163,7 @@ static struct runqueue runqueues[NR_CPUS] __cacheline_aligned;
 #endif
 
 
-///-----------added lines----------///////
+///-----------hw2----------///////
 
 
 
@@ -174,7 +174,6 @@ struct listNode {
 
 int enable_changeable = 0;	//if changeable policy is on
 list_t changeables_list;
-int first_make_changeable = 0;
 
 
 /*
@@ -197,11 +196,6 @@ int sys_is_changeable(pid_t pid){
 int sys_make_changeable(pid_t pid){
     runqueue_t *rq=this_rq();
     spin_lock_irq(rq);
-
-    if(first_make_changeable == 0){
-        first_make_changeable = 1;
-        INIT_LIST_HEAD(&(changeables_list));
-    }
 
     task_t* pcb = find_task_by_pid(pid);
     if(!pcb){
@@ -250,18 +244,18 @@ int sys_get_policy(pid_t pid){
 }
 
 int is_min_pid(pid_t pid){
-    struct list_head *pos;
+    struct list_head *pos, *q;
     struct listNode* tmp;
     pid_t min = pid;
-    list_for_each(pos , &changeables_list){
-        tmp = list_entry(pos, struct listNode, pid);
+    list_for_each_safe(pos, q,  &changeables_list){
+        tmp = list_entry(pos, struct listNode, node);
         if(min > tmp->pid)
             min = tmp->pid;
     }
     return (pid == min);
 }
 
-///-----------end of lines----------///////
+///-----------hw2----------///////
 
 
 /*
@@ -1733,7 +1727,7 @@ void __init sched_init(void)
 		rq->expired = rq->arrays + 1;
 		spin_lock_init(&rq->lock);
 		INIT_LIST_HEAD(&rq->migration_queue);
-
+        INIT_LIST_HEAD(&changeables_list);
 		for (j = 0; j < 2; j++) {
 			array = rq->arrays + j;
 			for (k = 0; k < MAX_PRIO; k++) {
