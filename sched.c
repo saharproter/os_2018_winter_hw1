@@ -167,11 +167,6 @@ static struct runqueue runqueues[NR_CPUS] __cacheline_aligned;
 
 
 
-struct listNode {
-    pid_t pid;
-    list_t node;
-};
-
 int enable_changeable = 0;	//if changeable policy is on
 list_t changeables_list;
 
@@ -206,10 +201,7 @@ int sys_make_changeable(pid_t pid){
     }
     pcb->policy = SCHED_CHANGEABLE;
     //insert pid to changeables pid list
-    struct listNode* tmp;
-    tmp = (struct listNode*)kmalloc(sizeof(struct listNode) , GFP_KERNEL);
-    tmp->pid = pid;
-    list_add_tail(&(tmp->node) , &(changeables_list));
+    list_add_tail(&pcb->run_list_sc , &(changeables_list));
     //TODO: take care of edge cases
 
     spin_unlock_irq(rq);
@@ -245,10 +237,10 @@ int sys_get_policy(pid_t pid){
 
 int is_min_pid(pid_t pid){
     struct list_head *pos, *q;
-    struct listNode* tmp;
+    task_t* tmp;
     pid_t min = pid;
     list_for_each_safe(pos, q,  &changeables_list){
-        tmp = list_entry(pos, struct listNode, node);
+        tmp = list_entry(pos, task_t, run_list_sc);
         if(min > tmp->pid)
             min = tmp->pid;
     }
@@ -375,6 +367,14 @@ static inline void deactivate_task(struct task_struct *p, runqueue_t *rq)
 	rq->nr_running--;
 	if (p->state == TASK_UNINTERRUPTIBLE)
 		rq->nr_uninterruptible++;
+    ///--------hw2------------
+    if(p->policy == SCHED_CHANGEABLE){
+        list_del(&p->run_list_sc);
+        if (list_empty(&changeables_list)){
+            //TODO: add things
+        }
+    }
+    ///--------hw2----------
 	dequeue_task(p, p->array);
 	p->array = NULL;
 }
