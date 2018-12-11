@@ -371,7 +371,8 @@ static inline void deactivate_task(struct task_struct *p, runqueue_t *rq)
     if(p->policy == SCHED_CHANGEABLE){
         list_del(&p->run_list_sc);
         if (list_empty(&changeables_list)){
-            //TODO: add things
+            //disable policy if no changeables left
+            enable_changeable = 0;
         }
     }
     ///--------hw2----------
@@ -954,6 +955,7 @@ pick_next_task:
 	next = list_entry(queue->next, task_t, run_list);
 
 switch_tasks:
+
 	prefetch(next);
 	clear_tsk_need_resched(prev);
 
@@ -1467,6 +1469,10 @@ out_unlock:
 
 asmlinkage long sys_sched_yield(void)
 {
+    ///------------hw2------------------///
+    if(current->policy == SCHED_CHANGEABLES)
+        return;
+    ///------------hw2------------------///
 	runqueue_t *rq = this_rq_lock();
 	prio_array_t *array = current->array;
 	int i;
