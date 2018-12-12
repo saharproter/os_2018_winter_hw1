@@ -960,6 +960,7 @@ asmlinkage void schedule(void)
 #if CONFIG_SMP
     pick_next_task:
 #endif
+    pick_next_task2:
     if (unlikely(!rq->nr_running)) {
 #if CONFIG_SMP
         load_balance(rq, 1);
@@ -970,9 +971,6 @@ asmlinkage void schedule(void)
         rq->expired_timestamp = 0;
         goto switch_tasks;
     }
-    ///------------hw2------------///
-    pick_next_again:
-    ///-----------hw2-----------///
     array = rq->active;
     if (unlikely(!array->nr_active)) {
         /*
@@ -990,13 +988,15 @@ asmlinkage void schedule(void)
 
     switch_tasks:
     //TODO: edge cases
+    ///---------------hw2-----------------
     if(enable_changeable ){
         if(next->policy == SCHED_CHANGEABLE && !is_min_pid(next->pid)){
             dequeue_task(next , rq->active);
             enqueue_task(next , rq->expired);
-            goto pick_next_again;
+            goto pick_next_task2;
         }
     }
+    ///----------------hw2-------------
     prefetch(next);
     clear_tsk_need_resched(prev);
 
