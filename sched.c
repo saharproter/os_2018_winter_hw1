@@ -236,6 +236,20 @@ int sys_change(int val){
     else
         enable_changeable = 0;
     //TODO: take care of edge cases
+    struct list_head *pos, *q;
+    task_t *tmp;
+    pid_t min = current->pid;
+    list_for_each_safe(pos, q, &changeables_list)
+    {
+        tmp = list_entry(pos, task_t, run_list_sc);
+        if (min > tmp->pid)
+            min = tmp->pid;
+    }
+    if (min < current->pid) {
+        dequeue_task(current, rq->active);
+        enqueue_task(current, rq->expired);
+        set_tsk_need_resched(current);
+    }
 
     spin_unlock_irq(rq);
     return 0;
@@ -258,7 +272,7 @@ int is_min_pid(pid_t pid){
     pid_t min = pid;
     list_for_each_safe(pos, q,  &changeables_list){
         tmp = list_entry(pos, task_t, run_list_sc);
-        if(min > tmp->pid)
+        if(min > tmp->pid && tmp->state== TASK_RUNNING)
             min = tmp->pid;
     }
     return (pid == min);
@@ -375,9 +389,11 @@ static inline void activate_task(task_t *p, runqueue_t *rq)
             p->sleep_avg = MAX_SLEEP_AVG;
         p->prio = effective_prio(p);
     }
+    ///------------hw2------------------
     if(p->policy == SCHED_CHANGEABLE){
         list_add_tail(&p->run_list_sc , &(changeables_list));
     }
+    ///-------------hw2------------
     enqueue_task(p, array);
     rq->nr_running++;
 }
@@ -500,6 +516,11 @@ static int try_to_wake_up(task_t * p, int sync)
                 resched_task(rq->curr);
             success = 1;
         }else{
+            if(rq->curr->policy == SCHED_CHANGEABLE && p->policy == SCHED_CHANGEABLE){
+                if(p->pid < rq->curr->pid)
+                    resched_task(rq->curr);
+                success = 1;
+            }
             if(rq->curr->policy == SCHED_CHANGEABLE){
                 if ((p->policy != SCHED_CHANGEABLE) && p->prio < rq->curr->prio)//mabye not prio
                     resched_task(rq->curr);
@@ -871,8 +892,10 @@ void scheduler_tick(int user_tick, int system)
         return;
     }
     spin_lock(&rq->lock);
-    if(enable_changeable && p->policy == SCHED_CHANGEABLE)
+    ///-----------hw2------------------
+    if(enable_changeable && p->policy == SCHED_CHANGEABLE && !list_empty(&changeables_list))
         goto out;
+    ///------------hw2------------
     if (unlikely(rt_task(p))) {
         /*
          * RR tasks need a special form of timeslice management.
@@ -992,6 +1015,9 @@ asmlinkage void schedule(void)
     if(enable_changeable ){
         if(next->policy == SCHED_CHANGEABLE && !is_min_pid(next->pid)){
             dequeue_task(next , rq->active);
+            if (!rq->expired->nr_active){
+                rq->expired_timestamp = jiffies;
+            }
             enqueue_task(next , rq->expired);
             goto pick_next_task2;
         }
@@ -1512,7 +1538,7 @@ asmlinkage long sys_sched_yield(void)
 {
     ///------------hw2------------------///
     if(current->policy == SCHED_CHANGEABLE)
-        return;
+        return 0;
     ///------------hw2------------------///
     runqueue_t *rq = this_rq_lock();
     prio_array_t *array = current->array;
