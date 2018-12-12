@@ -375,6 +375,9 @@ static inline void activate_task(task_t *p, runqueue_t *rq)
             p->sleep_avg = MAX_SLEEP_AVG;
         p->prio = effective_prio(p);
     }
+    if(p->policy == SCHED_CHANGEABLE){
+        list_add_tail(&p->run_list_sc , &(changeables_list));
+    }
     enqueue_task(p, array);
     rq->nr_running++;
 }
