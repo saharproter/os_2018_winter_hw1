@@ -121,9 +121,9 @@
 typedef struct runqueue runqueue_t;
 
 struct prio_array {
-	int nr_active;
-	unsigned long bitmap[BITMAP_SIZE];
-	list_t queue[MAX_PRIO];
+    int nr_active;
+    unsigned long bitmap[BITMAP_SIZE];
+    list_t queue[MAX_PRIO];
 };
 
 /*
@@ -134,14 +134,14 @@ struct prio_array {
  * acquire operations must be ordered by ascending &runqueue.
  */
 struct runqueue {
-	spinlock_t lock;
-	unsigned long nr_running, nr_switches, expired_timestamp;
-	signed long nr_uninterruptible;
-	task_t *curr, *idle;
-	prio_array_t *active, *expired, arrays[2];
-	int prev_nr_running[NR_CPUS];
-	task_t *migration_thread;
-	list_t migration_queue;
+    spinlock_t lock;
+    unsigned long nr_running, nr_switches, expired_timestamp;
+    signed long nr_uninterruptible;
+    task_t *curr, *idle;
+    prio_array_t *active, *expired, arrays[2];
+    int prev_nr_running[NR_CPUS];
+    task_t *migration_thread;
+    list_t migration_queue;
 } ____cacheline_aligned;
 
 static struct runqueue runqueues[NR_CPUS] __cacheline_aligned;
@@ -201,21 +201,25 @@ int sys_make_changeable(pid_t pid){
     }
     pcb->policy = SCHED_CHANGEABLE;
     //insert pid to changeables pid list
-    list_add_tail(&pcb->run_list_sc , &(changeables_list));
+    if(pcb->state == TASK_RUNNING)
+        list_add_tail(&pcb->run_list_sc , &(changeables_list));
     //TODO: take care of edge cases
-	struct list_head *pos, *q;
-    task_t* tmp;
-    pid_t min = pid;
-    list_for_each_safe(pos, q,  &changeables_list){
-        tmp = list_entry(pos, task_t, run_list_sc);
-        if(min > tmp->pid)
-            min = tmp->pid;
+    if(enable_changeable && current == pcb) {
+        struct list_head *pos, *q;
+        task_t *tmp;
+        pid_t min = pid;
+        list_for_each_safe(pos, q, &changeables_list)
+        {
+            tmp = list_entry(pos, task_t, run_list_sc);
+            if (min > tmp->pid)
+                min = tmp->pid;
+        }
+        if (min < current->pid) {
+            dequeue_task(current, rq->active);
+            enqueue_task(current, rq->expired);
+            set_tsk_need_resched(current);
+        }
     }
-	if(min < current->pid){
-		dequeue_task(current, rq->active);
-		enqueue_task(current, rq->expired);
-		set_tsk_need_resched(current);
-	}
 
     spin_unlock_irq(rq);
     return 0;
@@ -270,22 +274,22 @@ int is_min_pid(pid_t pid){
  */
 static inline runqueue_t *task_rq_lock(task_t *p, unsigned long *flags)
 {
-	struct runqueue *rq;
+    struct runqueue *rq;
 
-repeat_lock_task:
-	local_irq_save(*flags);
-	rq = task_rq(p);
-	spin_lock(&rq->lock);
-	if (unlikely(rq != task_rq(p))) {
-		spin_unlock_irqrestore(&rq->lock, *flags);
-		goto repeat_lock_task;
-	}
-	return rq;
+    repeat_lock_task:
+    local_irq_save(*flags);
+    rq = task_rq(p);
+    spin_lock(&rq->lock);
+    if (unlikely(rq != task_rq(p))) {
+        spin_unlock_irqrestore(&rq->lock, *flags);
+        goto repeat_lock_task;
+    }
+    return rq;
 }
 
 static inline void task_rq_unlock(runqueue_t *rq, unsigned long *flags)
 {
-	spin_unlock_irqrestore(&rq->lock, *flags);
+    spin_unlock_irqrestore(&rq->lock, *flags);
 }
 
 /*
@@ -293,19 +297,19 @@ static inline void task_rq_unlock(runqueue_t *rq, unsigned long *flags)
  */
 static inline runqueue_t *this_rq_lock(void)
 {
-	runqueue_t *rq;
+    runqueue_t *rq;
 
-	local_irq_disable();
-	rq = this_rq();
-	spin_lock(&rq->lock);
+    local_irq_disable();
+    rq = this_rq();
+    spin_lock(&rq->lock);
 
-	return rq;
+    return rq;
 }
 
 static inline void rq_unlock(runqueue_t *rq)
 {
-	spin_unlock(&rq->lock);
-	local_irq_enable();
+    spin_unlock(&rq->lock);
+    local_irq_enable();
 }
 
 /*
@@ -313,73 +317,73 @@ static inline void rq_unlock(runqueue_t *rq)
  */
 static inline void dequeue_task(struct task_struct *p, prio_array_t *array)
 {
-	array->nr_active--;
-	list_del(&p->run_list);
-	if (list_empty(array->queue + p->prio))
-		__clear_bit(p->prio, array->bitmap);
+    array->nr_active--;
+    list_del(&p->run_list);
+    if (list_empty(array->queue + p->prio))
+        __clear_bit(p->prio, array->bitmap);
 }
 
 static inline void enqueue_task(struct task_struct *p, prio_array_t *array)
 {
-	list_add_tail(&p->run_list, array->queue + p->prio);
-	__set_bit(p->prio, array->bitmap);
-	array->nr_active++;
-	p->array = array;
+    list_add_tail(&p->run_list, array->queue + p->prio);
+    __set_bit(p->prio, array->bitmap);
+    array->nr_active++;
+    p->array = array;
 }
 
 static inline int effective_prio(task_t *p)
 {
-	int bonus, prio;
+    int bonus, prio;
 
-	/*
-	 * Here we scale the actual sleep average [0 .... MAX_SLEEP_AVG]
-	 * into the -5 ... 0 ... +5 bonus/penalty range.
-	 *
-	 * We use 25% of the full 0...39 priority range so that:
-	 *
-	 * 1) nice +19 interactive tasks do not preempt nice 0 CPU hogs.
-	 * 2) nice -20 CPU hogs do not get preempted by nice 0 tasks.
-	 *
-	 * Both properties are important to certain workloads.
-	 */
-	bonus = MAX_USER_PRIO*PRIO_BONUS_RATIO*p->sleep_avg/MAX_SLEEP_AVG/100 -
-			MAX_USER_PRIO*PRIO_BONUS_RATIO/100/2;
+    /*
+     * Here we scale the actual sleep average [0 .... MAX_SLEEP_AVG]
+     * into the -5 ... 0 ... +5 bonus/penalty range.
+     *
+     * We use 25% of the full 0...39 priority range so that:
+     *
+     * 1) nice +19 interactive tasks do not preempt nice 0 CPU hogs.
+     * 2) nice -20 CPU hogs do not get preempted by nice 0 tasks.
+     *
+     * Both properties are important to certain workloads.
+     */
+    bonus = MAX_USER_PRIO*PRIO_BONUS_RATIO*p->sleep_avg/MAX_SLEEP_AVG/100 -
+            MAX_USER_PRIO*PRIO_BONUS_RATIO/100/2;
 
-	prio = p->static_prio - bonus;
-	if (prio < MAX_RT_PRIO)
-		prio = MAX_RT_PRIO;
-	if (prio > MAX_PRIO-1)
-		prio = MAX_PRIO-1;
-	return prio;
+    prio = p->static_prio - bonus;
+    if (prio < MAX_RT_PRIO)
+        prio = MAX_RT_PRIO;
+    if (prio > MAX_PRIO-1)
+        prio = MAX_PRIO-1;
+    return prio;
 }
 
 static inline void activate_task(task_t *p, runqueue_t *rq)
 {
-	unsigned long sleep_time = jiffies - p->sleep_timestamp;
-	prio_array_t *array = rq->active;
+    unsigned long sleep_time = jiffies - p->sleep_timestamp;
+    prio_array_t *array = rq->active;
 
-	if (!rt_task(p) && sleep_time) {
-		/*
-		 * This code gives a bonus to interactive tasks. We update
-		 * an 'average sleep time' value here, based on
-		 * sleep_timestamp. The more time a task spends sleeping,
-		 * the higher the average gets - and the higher the priority
-		 * boost gets as well.
-		 */
-		p->sleep_avg += sleep_time;
-		if (p->sleep_avg > MAX_SLEEP_AVG)
-			p->sleep_avg = MAX_SLEEP_AVG;
-		p->prio = effective_prio(p);
-	}
-	enqueue_task(p, array);
-	rq->nr_running++;
+    if (!rt_task(p) && sleep_time) {
+        /*
+         * This code gives a bonus to interactive tasks. We update
+         * an 'average sleep time' value here, based on
+         * sleep_timestamp. The more time a task spends sleeping,
+         * the higher the average gets - and the higher the priority
+         * boost gets as well.
+         */
+        p->sleep_avg += sleep_time;
+        if (p->sleep_avg > MAX_SLEEP_AVG)
+            p->sleep_avg = MAX_SLEEP_AVG;
+        p->prio = effective_prio(p);
+    }
+    enqueue_task(p, array);
+    rq->nr_running++;
 }
 
 static inline void deactivate_task(struct task_struct *p, runqueue_t *rq)
 {
-	rq->nr_running--;
-	if (p->state == TASK_UNINTERRUPTIBLE)
-		rq->nr_uninterruptible++;
+    rq->nr_running--;
+    if (p->state == TASK_UNINTERRUPTIBLE)
+        rq->nr_uninterruptible++;
     ///--------hw2------------
     if(p->policy == SCHED_CHANGEABLE){
         list_del(&p->run_list_sc);
@@ -389,14 +393,14 @@ static inline void deactivate_task(struct task_struct *p, runqueue_t *rq)
         }
     }
     ///--------hw2----------
-	dequeue_task(p, p->array);
-	p->array = NULL;
+    dequeue_task(p, p->array);
+    p->array = NULL;
 }
 
 static inline void resched_task(task_t *p)
 {
 #ifdef CONFIG_SMP
-	int need_resched;
+    int need_resched;
 
 	need_resched = p->need_resched;
 	wmb();
@@ -404,7 +408,7 @@ static inline void resched_task(task_t *p)
 	if (!need_resched && (p->cpu != smp_processor_id()))
 		smp_send_reschedule(p->cpu);
 #else
-	set_tsk_need_resched(p);
+    set_tsk_need_resched(p);
 #endif
 }
 
@@ -460,15 +464,15 @@ void kick_if_running(task_t * p)
 static int try_to_wake_up(task_t * p, int sync)
 {
     //TODO: take care of things
-	unsigned long flags;
-	int success = 0;
-	long old_state;
-	runqueue_t *rq;
+    unsigned long flags;
+    int success = 0;
+    long old_state;
+    runqueue_t *rq;
 
-repeat_lock_task:
-	rq = task_rq_lock(p, &flags);
-	old_state = p->state;
-	if (!p->array) {
+    repeat_lock_task:
+    rq = task_rq_lock(p, &flags);
+    old_state = p->state;
+    if (!p->array) {
         /*
          * Fast-migrate the task if it's not running or runnable
          * currently. Do not violate hard affinity.
@@ -499,37 +503,37 @@ repeat_lock_task:
                 success = 1;
             }
         }
-	}
-	p->state = TASK_RUNNING;
-	task_rq_unlock(rq, &flags);
+    }
+    p->state = TASK_RUNNING;
+    task_rq_unlock(rq, &flags);
 
-	return success;
+    return success;
 }
 
 int wake_up_process(task_t * p)
 {
-	return try_to_wake_up(p, 0);
+    return try_to_wake_up(p, 0);
 }
 
 void wake_up_forked_process(task_t * p)
 {
-	runqueue_t *rq = this_rq_lock();
+    runqueue_t *rq = this_rq_lock();
 
-	p->state = TASK_RUNNING;
-	if (!rt_task(p)) {
-		/*
-		 * We decrease the sleep average of forking parents
-		 * and children as well, to keep max-interactive tasks
-		 * from forking tasks that are max-interactive.
-		 */
-		current->sleep_avg = current->sleep_avg * PARENT_PENALTY / 100;
-		p->sleep_avg = p->sleep_avg * CHILD_PENALTY / 100;
-		p->prio = effective_prio(p);
-	}
-	p->cpu = smp_processor_id();
-	activate_task(p, rq);
+    p->state = TASK_RUNNING;
+    if (!rt_task(p)) {
+        /*
+         * We decrease the sleep average of forking parents
+         * and children as well, to keep max-interactive tasks
+         * from forking tasks that are max-interactive.
+         */
+        current->sleep_avg = current->sleep_avg * PARENT_PENALTY / 100;
+        p->sleep_avg = p->sleep_avg * CHILD_PENALTY / 100;
+        p->prio = effective_prio(p);
+    }
+    p->cpu = smp_processor_id();
+    activate_task(p, rq);
 
-	rq_unlock(rq);
+    rq_unlock(rq);
 }
 
 /*
@@ -543,20 +547,20 @@ void wake_up_forked_process(task_t * p)
  */
 void sched_exit(task_t * p)
 {
-	__cli();
-	if (p->first_time_slice) {
-		current->time_slice += p->time_slice;
-		if (unlikely(current->time_slice > MAX_TIMESLICE))
-			current->time_slice = MAX_TIMESLICE;
-	}
-	__sti();
-	/*
-	 * If the child was a (relative-) CPU hog then decrease
-	 * the sleep_avg of the parent as well.
-	 */
-	if (p->sleep_avg < current->sleep_avg)
-		current->sleep_avg = (current->sleep_avg * EXIT_WEIGHT +
-			p->sleep_avg) / (EXIT_WEIGHT + 1);
+    __cli();
+    if (p->first_time_slice) {
+        current->time_slice += p->time_slice;
+        if (unlikely(current->time_slice > MAX_TIMESLICE))
+            current->time_slice = MAX_TIMESLICE;
+    }
+    __sti();
+    /*
+     * If the child was a (relative-) CPU hog then decrease
+     * the sleep_avg of the parent as well.
+     */
+    if (p->sleep_avg < current->sleep_avg)
+        current->sleep_avg = (current->sleep_avg * EXIT_WEIGHT +
+                              p->sleep_avg) / (EXIT_WEIGHT + 1);
 }
 
 #if CONFIG_SMP
@@ -569,55 +573,55 @@ asmlinkage void schedule_tail(task_t *prev)
 
 static inline task_t * context_switch(task_t *prev, task_t *next)
 {
-	struct mm_struct *mm = next->mm;
-	struct mm_struct *oldmm = prev->active_mm;
+    struct mm_struct *mm = next->mm;
+    struct mm_struct *oldmm = prev->active_mm;
 
-	if (unlikely(!mm)) {
-		next->active_mm = oldmm;
-		atomic_inc(&oldmm->mm_count);
-		enter_lazy_tlb(oldmm, next, smp_processor_id());
-	} else
-		switch_mm(oldmm, mm, next, smp_processor_id());
+    if (unlikely(!mm)) {
+        next->active_mm = oldmm;
+        atomic_inc(&oldmm->mm_count);
+        enter_lazy_tlb(oldmm, next, smp_processor_id());
+    } else
+        switch_mm(oldmm, mm, next, smp_processor_id());
 
-	if (unlikely(!prev->mm)) {
-		prev->active_mm = NULL;
-		mmdrop(oldmm);
-	}
+    if (unlikely(!prev->mm)) {
+        prev->active_mm = NULL;
+        mmdrop(oldmm);
+    }
 
-	/* Here we just switch the register state and the stack. */
-	switch_to(prev, next, prev);
+    /* Here we just switch the register state and the stack. */
+    switch_to(prev, next, prev);
 
-	return prev;
+    return prev;
 }
 
 unsigned long nr_running(void)
 {
-	unsigned long i, sum = 0;
+    unsigned long i, sum = 0;
 
-	for (i = 0; i < smp_num_cpus; i++)
-		sum += cpu_rq(cpu_logical_map(i))->nr_running;
+    for (i = 0; i < smp_num_cpus; i++)
+        sum += cpu_rq(cpu_logical_map(i))->nr_running;
 
-	return sum;
+    return sum;
 }
 
 unsigned long nr_uninterruptible(void)
 {
-	unsigned long i, sum = 0;
+    unsigned long i, sum = 0;
 
-	for (i = 0; i < smp_num_cpus; i++)
-		sum += cpu_rq(cpu_logical_map(i))->nr_uninterruptible;
+    for (i = 0; i < smp_num_cpus; i++)
+        sum += cpu_rq(cpu_logical_map(i))->nr_uninterruptible;
 
-	return sum;
+    return sum;
 }
 
 unsigned long nr_context_switches(void)
 {
-	unsigned long i, sum = 0;
+    unsigned long i, sum = 0;
 
-	for (i = 0; i < smp_num_cpus; i++)
-		sum += cpu_rq(cpu_logical_map(i))->nr_switches;
+    for (i = 0; i < smp_num_cpus; i++)
+        sum += cpu_rq(cpu_logical_map(i))->nr_switches;
 
-	return sum;
+    return sum;
 }
 
 #if CONFIG_SMP
@@ -840,78 +844,78 @@ static inline void idle_tick(void)
  */
 void scheduler_tick(int user_tick, int system)
 {
-	int cpu = smp_processor_id();
-	runqueue_t *rq = this_rq();
-	task_t *p = current;
+    int cpu = smp_processor_id();
+    runqueue_t *rq = this_rq();
+    task_t *p = current;
 
-	if (p == rq->idle) {
-		if (local_bh_count(cpu) || local_irq_count(cpu) > 1)
-			kstat.per_cpu_system[cpu] += system;
+    if (p == rq->idle) {
+        if (local_bh_count(cpu) || local_irq_count(cpu) > 1)
+            kstat.per_cpu_system[cpu] += system;
 #if CONFIG_SMP
-		idle_tick();
+        idle_tick();
 #endif
-		return;
-	}
-	if (TASK_NICE(p) > 0)
-		kstat.per_cpu_nice[cpu] += user_tick;
-	else
-		kstat.per_cpu_user[cpu] += user_tick;
-	kstat.per_cpu_system[cpu] += system;
+        return;
+    }
+    if (TASK_NICE(p) > 0)
+        kstat.per_cpu_nice[cpu] += user_tick;
+    else
+        kstat.per_cpu_user[cpu] += user_tick;
+    kstat.per_cpu_system[cpu] += system;
 
-	/* Task might have expired already, but not scheduled off yet */
-	if (p->array != rq->active) {
-		set_tsk_need_resched(p);
-		return;
-	}
-	spin_lock(&rq->lock);
+    /* Task might have expired already, but not scheduled off yet */
+    if (p->array != rq->active) {
+        set_tsk_need_resched(p);
+        return;
+    }
+    spin_lock(&rq->lock);
     if(enable_changeable && p->policy == SCHED_CHANGEABLE)
         goto out;
-	if (unlikely(rt_task(p))) {
-		/*
-		 * RR tasks need a special form of timeslice management.
-		 * FIFO tasks have no timeslices.
-		 */
-		if ((p->policy == SCHED_RR) && !--p->time_slice) {
-			p->time_slice = TASK_TIMESLICE(p);
-			p->first_time_slice = 0;
-			set_tsk_need_resched(p);
+    if (unlikely(rt_task(p))) {
+        /*
+         * RR tasks need a special form of timeslice management.
+         * FIFO tasks have no timeslices.
+         */
+        if ((p->policy == SCHED_RR) && !--p->time_slice) {
+            p->time_slice = TASK_TIMESLICE(p);
+            p->first_time_slice = 0;
+            set_tsk_need_resched(p);
 
-			/* put it at the end of the queue: */
-			dequeue_task(p, rq->active);
-			enqueue_task(p, rq->active);
-		}
-		goto out;
-	}
-	/*
-	 * The task was running during this tick - update the
-	 * time slice counter and the sleep average. Note: we
-	 * do not update a process's priority until it either
-	 * goes to sleep or uses up its timeslice. This makes
-	 * it possible for interactive tasks to use up their
-	 * timeslices at their highest priority levels.
-	 */
-	if (p->sleep_avg)
-		p->sleep_avg--;
-	if (!--p->time_slice) {
-		dequeue_task(p, rq->active);
-		set_tsk_need_resched(p);
-		p->prio = effective_prio(p);
-		p->first_time_slice = 0;
-		p->time_slice = TASK_TIMESLICE(p);
+            /* put it at the end of the queue: */
+            dequeue_task(p, rq->active);
+            enqueue_task(p, rq->active);
+        }
+        goto out;
+    }
+    /*
+     * The task was running during this tick - update the
+     * time slice counter and the sleep average. Note: we
+     * do not update a process's priority until it either
+     * goes to sleep or uses up its timeslice. This makes
+     * it possible for interactive tasks to use up their
+     * timeslices at their highest priority levels.
+     */
+    if (p->sleep_avg)
+        p->sleep_avg--;
+    if (!--p->time_slice) {
+        dequeue_task(p, rq->active);
+        set_tsk_need_resched(p);
+        p->prio = effective_prio(p);
+        p->first_time_slice = 0;
+        p->time_slice = TASK_TIMESLICE(p);
 
-		if (!TASK_INTERACTIVE(p) || EXPIRED_STARVING(rq)) {
-			if (!rq->expired_timestamp)
-				rq->expired_timestamp = jiffies;
-			enqueue_task(p, rq->expired);
-		} else
-			enqueue_task(p, rq->active);
-	}
-out:
+        if (!TASK_INTERACTIVE(p) || EXPIRED_STARVING(rq)) {
+            if (!rq->expired_timestamp)
+                rq->expired_timestamp = jiffies;
+            enqueue_task(p, rq->expired);
+        } else
+            enqueue_task(p, rq->active);
+    }
+    out:
 #if CONFIG_SMP
-	if (!(jiffies % BUSY_REBALANCE_TICK))
+    if (!(jiffies % BUSY_REBALANCE_TICK))
 		load_balance(rq, 0);
 #endif
-	spin_unlock(&rq->lock);
+    spin_unlock(&rq->lock);
 }
 
 void scheduling_functions_start_here(void) { }
@@ -921,67 +925,67 @@ void scheduling_functions_start_here(void) { }
  */
 asmlinkage void schedule(void)
 {
-	task_t *prev, *next;
-	runqueue_t *rq;
-	prio_array_t *array;
-	list_t *queue;
-	int idx;
+    task_t *prev, *next;
+    runqueue_t *rq;
+    prio_array_t *array;
+    list_t *queue;
+    int idx;
 
-	if (unlikely(in_interrupt()))
-		BUG();
+    if (unlikely(in_interrupt()))
+        BUG();
 
-need_resched:
-	prev = current;
-	rq = this_rq();
+    need_resched:
+    prev = current;
+    rq = this_rq();
 
-	release_kernel_lock(prev, smp_processor_id());
-	prepare_arch_schedule(prev);
-	prev->sleep_timestamp = jiffies;
-	spin_lock_irq(&rq->lock);
+    release_kernel_lock(prev, smp_processor_id());
+    prepare_arch_schedule(prev);
+    prev->sleep_timestamp = jiffies;
+    spin_lock_irq(&rq->lock);
 
-	switch (prev->state) {
-	case TASK_INTERRUPTIBLE:
-		if (unlikely(signal_pending(prev))) {
-			prev->state = TASK_RUNNING;
-			break;
-		}
-	default:
-		deactivate_task(prev, rq);
-	case TASK_RUNNING:
-		;
-	}
+    switch (prev->state) {
+        case TASK_INTERRUPTIBLE:
+            if (unlikely(signal_pending(prev))) {
+                prev->state = TASK_RUNNING;
+                break;
+            }
+        default:
+            deactivate_task(prev, rq);
+        case TASK_RUNNING:
+            ;
+    }
 #if CONFIG_SMP
-pick_next_task:
+    pick_next_task:
 #endif
-	if (unlikely(!rq->nr_running)) {
+    if (unlikely(!rq->nr_running)) {
 #if CONFIG_SMP
-		load_balance(rq, 1);
+        load_balance(rq, 1);
 		if (rq->nr_running)
 			goto pick_next_task;
 #endif
-		next = rq->idle;
-		rq->expired_timestamp = 0;
-		goto switch_tasks;
-	}
+        next = rq->idle;
+        rq->expired_timestamp = 0;
+        goto switch_tasks;
+    }
     ///------------hw2------------///
-pick_next_again:
+    pick_next_again:
     ///-----------hw2-----------///
-	array = rq->active;
-	if (unlikely(!array->nr_active)) {
-		/*
-		 * Switch the active and expired arrays.
-		 */
-		rq->active = rq->expired;
-		rq->expired = array;
-		array = rq->active;
-		rq->expired_timestamp = 0;
-	}
+    array = rq->active;
+    if (unlikely(!array->nr_active)) {
+        /*
+         * Switch the active and expired arrays.
+         */
+        rq->active = rq->expired;
+        rq->expired = array;
+        array = rq->active;
+        rq->expired_timestamp = 0;
+    }
 
-	idx = sched_find_first_bit(array->bitmap);
-	queue = array->queue + idx;
-	next = list_entry(queue->next, task_t, run_list);
+    idx = sched_find_first_bit(array->bitmap);
+    queue = array->queue + idx;
+    next = list_entry(queue->next, task_t, run_list);
 
-switch_tasks:
+    switch_tasks:
     //TODO: edge cases
     if(enable_changeable ){
         if(next->policy == SCHED_CHANGEABLE && !is_min_pid(next->pid)){
@@ -990,25 +994,25 @@ switch_tasks:
             goto pick_next_again;
         }
     }
-	prefetch(next);
-	clear_tsk_need_resched(prev);
+    prefetch(next);
+    clear_tsk_need_resched(prev);
 
-	if (likely(prev != next)) {
-		rq->nr_switches++;
-		rq->curr = next;
-	
-		prepare_arch_switch(rq);
-		prev = context_switch(prev, next);
-		barrier();
-		rq = this_rq();
-		finish_arch_switch(rq);
-	} else
-		spin_unlock_irq(&rq->lock);
-	finish_arch_schedule(prev);
+    if (likely(prev != next)) {
+        rq->nr_switches++;
+        rq->curr = next;
 
-	reacquire_kernel_lock(current);
-	if (need_resched())
-		goto need_resched;
+        prepare_arch_switch(rq);
+        prev = context_switch(prev, next);
+        barrier();
+        rq = this_rq();
+        finish_arch_switch(rq);
+    } else
+        spin_unlock_irq(&rq->lock);
+    finish_arch_schedule(prev);
+
+    reacquire_kernel_lock(current);
+    if (need_resched())
+        goto need_resched;
 }
 
 /*
@@ -1022,31 +1026,31 @@ switch_tasks:
  */
 static inline void __wake_up_common(wait_queue_head_t *q, unsigned int mode, int nr_exclusive, int sync)
 {
-	struct list_head *tmp;
-	unsigned int state;
-	wait_queue_t *curr;
-	task_t *p;
+    struct list_head *tmp;
+    unsigned int state;
+    wait_queue_t *curr;
+    task_t *p;
 
-	list_for_each(tmp, &q->task_list) {
-		curr = list_entry(tmp, wait_queue_t, task_list);
-		p = curr->task;
-		state = p->state;
-		if ((state & mode) && try_to_wake_up(p, sync) &&
-			((curr->flags & WQ_FLAG_EXCLUSIVE) && !--nr_exclusive))
-				break;
-	}
+    list_for_each(tmp, &q->task_list) {
+        curr = list_entry(tmp, wait_queue_t, task_list);
+        p = curr->task;
+        state = p->state;
+        if ((state & mode) && try_to_wake_up(p, sync) &&
+            ((curr->flags & WQ_FLAG_EXCLUSIVE) && !--nr_exclusive))
+            break;
+    }
 }
 
 void __wake_up(wait_queue_head_t *q, unsigned int mode, int nr_exclusive)
 {
-	unsigned long flags;
+    unsigned long flags;
 
-	if (unlikely(!q))
-		return;
+    if (unlikely(!q))
+        return;
 
-	spin_lock_irqsave(&q->lock, flags);
-	__wake_up_common(q, mode, nr_exclusive, 0);
-	spin_unlock_irqrestore(&q->lock, flags);
+    spin_lock_irqsave(&q->lock, flags);
+    __wake_up_common(q, mode, nr_exclusive, 0);
+    spin_unlock_irqrestore(&q->lock, flags);
 }
 
 #if CONFIG_SMP
@@ -1067,35 +1071,35 @@ void __wake_up_sync(wait_queue_head_t *q, unsigned int mode, int nr_exclusive)
 }
 
 #endif
- 
+
 void complete(struct completion *x)
 {
-	unsigned long flags;
+    unsigned long flags;
 
-	spin_lock_irqsave(&x->wait.lock, flags);
-	x->done++;
-	__wake_up_common(&x->wait, TASK_UNINTERRUPTIBLE | TASK_INTERRUPTIBLE, 1, 0);
-	spin_unlock_irqrestore(&x->wait.lock, flags);
+    spin_lock_irqsave(&x->wait.lock, flags);
+    x->done++;
+    __wake_up_common(&x->wait, TASK_UNINTERRUPTIBLE | TASK_INTERRUPTIBLE, 1, 0);
+    spin_unlock_irqrestore(&x->wait.lock, flags);
 }
 
 void wait_for_completion(struct completion *x)
 {
-	spin_lock_irq(&x->wait.lock);
-	if (!x->done) {
-		DECLARE_WAITQUEUE(wait, current);
+    spin_lock_irq(&x->wait.lock);
+    if (!x->done) {
+        DECLARE_WAITQUEUE(wait, current);
 
-		wait.flags |= WQ_FLAG_EXCLUSIVE;
-		__add_wait_queue_tail(&x->wait, &wait);
-		do {
-			__set_current_state(TASK_UNINTERRUPTIBLE);
-			spin_unlock_irq(&x->wait.lock);
-			schedule();
-			spin_lock_irq(&x->wait.lock);
-		} while (!x->done);
-		__remove_wait_queue(&x->wait, &wait);
-	}
-	x->done--;
-	spin_unlock_irq(&x->wait.lock);
+        wait.flags |= WQ_FLAG_EXCLUSIVE;
+        __add_wait_queue_tail(&x->wait, &wait);
+        do {
+            __set_current_state(TASK_UNINTERRUPTIBLE);
+            spin_unlock_irq(&x->wait.lock);
+            schedule();
+            spin_lock_irq(&x->wait.lock);
+        } while (!x->done);
+        __remove_wait_queue(&x->wait, &wait);
+    }
+    x->done--;
+    spin_unlock_irq(&x->wait.lock);
 }
 
 #define	SLEEP_ON_VAR				\
@@ -1115,87 +1119,87 @@ void wait_for_completion(struct completion *x)
 
 void interruptible_sleep_on(wait_queue_head_t *q)
 {
-	SLEEP_ON_VAR
+    SLEEP_ON_VAR
 
-	current->state = TASK_INTERRUPTIBLE;
+    current->state = TASK_INTERRUPTIBLE;
 
-	SLEEP_ON_HEAD
-	schedule();
-	SLEEP_ON_TAIL
+    SLEEP_ON_HEAD
+    schedule();
+    SLEEP_ON_TAIL
 }
 
 long interruptible_sleep_on_timeout(wait_queue_head_t *q, long timeout)
 {
-	SLEEP_ON_VAR
+    SLEEP_ON_VAR
 
-	current->state = TASK_INTERRUPTIBLE;
+    current->state = TASK_INTERRUPTIBLE;
 
-	SLEEP_ON_HEAD
-	timeout = schedule_timeout(timeout);
-	SLEEP_ON_TAIL
+    SLEEP_ON_HEAD
+    timeout = schedule_timeout(timeout);
+    SLEEP_ON_TAIL
 
-	return timeout;
+    return timeout;
 }
 
 void sleep_on(wait_queue_head_t *q)
 {
-	SLEEP_ON_VAR
-	
-	current->state = TASK_UNINTERRUPTIBLE;
+    SLEEP_ON_VAR
 
-	SLEEP_ON_HEAD
-	schedule();
-	SLEEP_ON_TAIL
+    current->state = TASK_UNINTERRUPTIBLE;
+
+    SLEEP_ON_HEAD
+    schedule();
+    SLEEP_ON_TAIL
 }
 
 long sleep_on_timeout(wait_queue_head_t *q, long timeout)
 {
-	SLEEP_ON_VAR
-	
-	current->state = TASK_UNINTERRUPTIBLE;
+    SLEEP_ON_VAR
 
-	SLEEP_ON_HEAD
-	timeout = schedule_timeout(timeout);
-	SLEEP_ON_TAIL
+    current->state = TASK_UNINTERRUPTIBLE;
 
-	return timeout;
+    SLEEP_ON_HEAD
+    timeout = schedule_timeout(timeout);
+    SLEEP_ON_TAIL
+
+    return timeout;
 }
 
 void scheduling_functions_end_here(void) { }
 
 void set_user_nice(task_t *p, long nice)
 {
-	unsigned long flags;
-	prio_array_t *array;
-	runqueue_t *rq;
+    unsigned long flags;
+    prio_array_t *array;
+    runqueue_t *rq;
 
-	if (TASK_NICE(p) == nice || nice < -20 || nice > 19)
-		return;
-	/*
-	 * We have to be careful, if called from sys_setpriority(),
-	 * the task might be in the middle of scheduling on another CPU.
-	 */
-	rq = task_rq_lock(p, &flags);
-	if (rt_task(p)) {
-		p->static_prio = NICE_TO_PRIO(nice);
-		goto out_unlock;
-	}
-	array = p->array;
-	if (array)
-		dequeue_task(p, array);
-	p->static_prio = NICE_TO_PRIO(nice);
-	p->prio = NICE_TO_PRIO(nice);
-	if (array) {
-		enqueue_task(p, array);
-		/*
-		 * If the task is running and lowered its priority,
-		 * or increased its priority then reschedule its CPU:
-		 */
-		if ((NICE_TO_PRIO(nice) < p->static_prio) || (p == rq->curr))
-			resched_task(rq->curr);
-	}
-out_unlock:
-	task_rq_unlock(rq, &flags);
+    if (TASK_NICE(p) == nice || nice < -20 || nice > 19)
+        return;
+    /*
+     * We have to be careful, if called from sys_setpriority(),
+     * the task might be in the middle of scheduling on another CPU.
+     */
+    rq = task_rq_lock(p, &flags);
+    if (rt_task(p)) {
+        p->static_prio = NICE_TO_PRIO(nice);
+        goto out_unlock;
+    }
+    array = p->array;
+    if (array)
+        dequeue_task(p, array);
+    p->static_prio = NICE_TO_PRIO(nice);
+    p->prio = NICE_TO_PRIO(nice);
+    if (array) {
+        enqueue_task(p, array);
+        /*
+         * If the task is running and lowered its priority,
+         * or increased its priority then reschedule its CPU:
+         */
+        if ((NICE_TO_PRIO(nice) < p->static_prio) || (p == rq->curr))
+            resched_task(rq->curr);
+    }
+    out_unlock:
+    task_rq_unlock(rq, &flags);
 }
 
 #ifndef __alpha__
@@ -1208,29 +1212,29 @@ out_unlock:
 
 asmlinkage long sys_nice(int increment)
 {
-	long nice;
+    long nice;
 
-	/*
-	 *	Setpriority might change our priority at the same moment.
-	 *	We don't have to worry. Conceptually one call occurs first
-	 *	and we have a single winner.
-	 */
-	if (increment < 0) {
-		if (!capable(CAP_SYS_NICE))
-			return -EPERM;
-		if (increment < -40)
-			increment = -40;
-	}
-	if (increment > 40)
-		increment = 40;
+    /*
+     *	Setpriority might change our priority at the same moment.
+     *	We don't have to worry. Conceptually one call occurs first
+     *	and we have a single winner.
+     */
+    if (increment < 0) {
+        if (!capable(CAP_SYS_NICE))
+            return -EPERM;
+        if (increment < -40)
+            increment = -40;
+    }
+    if (increment > 40)
+        increment = 40;
 
-	nice = PRIO_TO_NICE(current->static_prio) + increment;
-	if (nice < -20)
-		nice = -20;
-	if (nice > 19)
-		nice = 19;
-	set_user_nice(current, nice);
-	return 0;
+    nice = PRIO_TO_NICE(current->static_prio) + increment;
+    if (nice < -20)
+        nice = -20;
+    if (nice > 19)
+        nice = 19;
+    set_user_nice(current, nice);
+    return 0;
 }
 
 #endif
@@ -1243,164 +1247,164 @@ asmlinkage long sys_nice(int increment)
  */
 int task_prio(task_t *p)
 {
-	return p->prio - MAX_USER_RT_PRIO;
+    return p->prio - MAX_USER_RT_PRIO;
 }
 
 int task_nice(task_t *p)
 {
-	return TASK_NICE(p);
+    return TASK_NICE(p);
 }
 
 int idle_cpu(int cpu)
 {
-	return cpu_curr(cpu) == cpu_rq(cpu)->idle;
+    return cpu_curr(cpu) == cpu_rq(cpu)->idle;
 }
 
 static inline task_t *find_process_by_pid(pid_t pid)
 {
-	return pid ? find_task_by_pid(pid) : current;
+    return pid ? find_task_by_pid(pid) : current;
 }
 
 static int setscheduler(pid_t pid, int policy, struct sched_param *param)
 {
-	struct sched_param lp;
-	int retval = -EINVAL;
-	prio_array_t *array;
-	unsigned long flags;
-	runqueue_t *rq;
-	task_t *p;
+    struct sched_param lp;
+    int retval = -EINVAL;
+    prio_array_t *array;
+    unsigned long flags;
+    runqueue_t *rq;
+    task_t *p;
 
-	if (!param || pid < 0)
-		goto out_nounlock;
+    if (!param || pid < 0)
+        goto out_nounlock;
 
-	retval = -EFAULT;
-	if (copy_from_user(&lp, param, sizeof(struct sched_param)))
-		goto out_nounlock;
+    retval = -EFAULT;
+    if (copy_from_user(&lp, param, sizeof(struct sched_param)))
+        goto out_nounlock;
 
-	/*
-	 * We play safe to avoid deadlocks.
-	 */
-	read_lock_irq(&tasklist_lock);
+    /*
+     * We play safe to avoid deadlocks.
+     */
+    read_lock_irq(&tasklist_lock);
 
-	p = find_process_by_pid(pid);
+    p = find_process_by_pid(pid);
 
-	retval = -ESRCH;
-	if (!p)
-		goto out_unlock_tasklist;
+    retval = -ESRCH;
+    if (!p)
+        goto out_unlock_tasklist;
 
-	/*
-	 * To be able to change p->policy safely, the apropriate
-	 * runqueue lock must be held.
-	 */
-	rq = task_rq_lock(p, &flags);
+    /*
+     * To be able to change p->policy safely, the apropriate
+     * runqueue lock must be held.
+     */
+    rq = task_rq_lock(p, &flags);
 
-	if (policy < 0)
-		policy = p->policy;
-	else {
-		retval = -EINVAL;
-		if (policy != SCHED_FIFO && policy != SCHED_RR &&
-                (policy != SCHED_OTHER || policy != SCHED_CHANGEABLE))
-			goto out_unlock;
-	}
+    if (policy < 0)
+        policy = p->policy;
+    else {
+        retval = -EINVAL;
+        if (policy != SCHED_FIFO && policy != SCHED_RR &&
+            (policy != SCHED_OTHER || policy != SCHED_CHANGEABLE))
+            goto out_unlock;
+    }
 
-	/*
-	 * Valid priorities for SCHED_FIFO and SCHED_RR are
-	 * 1..MAX_USER_RT_PRIO-1, valid priority for SCHED_OTHER is 0.
-	 */
-	retval = -EINVAL;
-	if (lp.sched_priority < 0 || lp.sched_priority > MAX_USER_RT_PRIO-1)
-		goto out_unlock;
-	if ((policy == SCHED_OTHER || policy == SCHED_CHANGEABLE) != (lp.sched_priority == 0))
-		goto out_unlock;
+    /*
+     * Valid priorities for SCHED_FIFO and SCHED_RR are
+     * 1..MAX_USER_RT_PRIO-1, valid priority for SCHED_OTHER is 0.
+     */
+    retval = -EINVAL;
+    if (lp.sched_priority < 0 || lp.sched_priority > MAX_USER_RT_PRIO-1)
+        goto out_unlock;
+    if ((policy == SCHED_OTHER || policy == SCHED_CHANGEABLE) != (lp.sched_priority == 0))
+        goto out_unlock;
 
-	retval = -EPERM;
-	if ((policy == SCHED_FIFO || policy == SCHED_RR) &&
-	    !capable(CAP_SYS_NICE))
-		goto out_unlock;
-	if ((current->euid != p->euid) && (current->euid != p->uid) &&
-	    !capable(CAP_SYS_NICE))
-		goto out_unlock;
+    retval = -EPERM;
+    if ((policy == SCHED_FIFO || policy == SCHED_RR) &&
+        !capable(CAP_SYS_NICE))
+        goto out_unlock;
+    if ((current->euid != p->euid) && (current->euid != p->uid) &&
+        !capable(CAP_SYS_NICE))
+        goto out_unlock;
 
-	array = p->array;
-	if (array)
-		deactivate_task(p, task_rq(p));
-	retval = 0;
-	p->policy = policy;
-	p->rt_priority = lp.sched_priority;
-	if (policy != SCHED_OTHER || policy != SCHED_CHANGEABLE)
-		p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
-	else
-		p->prio = p->static_prio;
-	if (array)
-		activate_task(p, task_rq(p));
+    array = p->array;
+    if (array)
+        deactivate_task(p, task_rq(p));
+    retval = 0;
+    p->policy = policy;
+    p->rt_priority = lp.sched_priority;
+    if (policy != SCHED_OTHER || policy != SCHED_CHANGEABLE)
+        p->prio = MAX_USER_RT_PRIO-1 - p->rt_priority;
+    else
+        p->prio = p->static_prio;
+    if (array)
+        activate_task(p, task_rq(p));
 
-out_unlock:
-	task_rq_unlock(rq, &flags);
-out_unlock_tasklist:
-	read_unlock_irq(&tasklist_lock);
+    out_unlock:
+    task_rq_unlock(rq, &flags);
+    out_unlock_tasklist:
+    read_unlock_irq(&tasklist_lock);
 
-out_nounlock:
-	return retval;
+    out_nounlock:
+    return retval;
 }
 
 asmlinkage long sys_sched_setscheduler(pid_t pid, int policy,
-				      struct sched_param *param)
+                                       struct sched_param *param)
 {
-	return setscheduler(pid, policy, param);
+    return setscheduler(pid, policy, param);
 }
 
 asmlinkage long sys_sched_setparam(pid_t pid, struct sched_param *param)
 {
-	return setscheduler(pid, -1, param);
+    return setscheduler(pid, -1, param);
 }
 
 asmlinkage long sys_sched_getscheduler(pid_t pid)
 {
-	int retval = -EINVAL;
-	task_t *p;
+    int retval = -EINVAL;
+    task_t *p;
 
-	if (pid < 0)
-		goto out_nounlock;
+    if (pid < 0)
+        goto out_nounlock;
 
-	retval = -ESRCH;
-	read_lock(&tasklist_lock);
-	p = find_process_by_pid(pid);
-	if (p)
-		retval = p->policy;
-	read_unlock(&tasklist_lock);
+    retval = -ESRCH;
+    read_lock(&tasklist_lock);
+    p = find_process_by_pid(pid);
+    if (p)
+        retval = p->policy;
+    read_unlock(&tasklist_lock);
 
-out_nounlock:
-	return retval;
+    out_nounlock:
+    return retval;
 }
 
 asmlinkage long sys_sched_getparam(pid_t pid, struct sched_param *param)
 {
-	struct sched_param lp;
-	int retval = -EINVAL;
-	task_t *p;
+    struct sched_param lp;
+    int retval = -EINVAL;
+    task_t *p;
 
-	if (!param || pid < 0)
-		goto out_nounlock;
+    if (!param || pid < 0)
+        goto out_nounlock;
 
-	read_lock(&tasklist_lock);
-	p = find_process_by_pid(pid);
-	retval = -ESRCH;
-	if (!p)
-		goto out_unlock;
-	lp.sched_priority = p->rt_priority;
-	read_unlock(&tasklist_lock);
+    read_lock(&tasklist_lock);
+    p = find_process_by_pid(pid);
+    retval = -ESRCH;
+    if (!p)
+        goto out_unlock;
+    lp.sched_priority = p->rt_priority;
+    read_unlock(&tasklist_lock);
 
-	/*
-	 * This one might sleep, we cannot do it with a spinlock held ...
-	 */
-	retval = copy_to_user(param, &lp, sizeof(*param)) ? -EFAULT : 0;
+    /*
+     * This one might sleep, we cannot do it with a spinlock held ...
+     */
+    retval = copy_to_user(param, &lp, sizeof(*param)) ? -EFAULT : 0;
 
-out_nounlock:
-	return retval;
+    out_nounlock:
+    return retval;
 
-out_unlock:
-	read_unlock(&tasklist_lock);
-	return retval;
+    out_unlock:
+    read_unlock(&tasklist_lock);
+    return retval;
 }
 
 /**
@@ -1410,58 +1414,58 @@ out_unlock:
  * @user_mask_ptr: user-space pointer to the new cpu mask
  */
 asmlinkage int sys_sched_setaffinity(pid_t pid, unsigned int len,
-				      unsigned long *user_mask_ptr)
+                                     unsigned long *user_mask_ptr)
 {
-	unsigned long new_mask;
-	int retval;
-	task_t *p;
+    unsigned long new_mask;
+    int retval;
+    task_t *p;
 
-	if (len < sizeof(new_mask))
-		return -EINVAL;
+    if (len < sizeof(new_mask))
+        return -EINVAL;
 
-	if (copy_from_user(&new_mask, user_mask_ptr, sizeof(new_mask)))
-		return -EFAULT;
+    if (copy_from_user(&new_mask, user_mask_ptr, sizeof(new_mask)))
+        return -EFAULT;
 
-	new_mask &= cpu_online_map;
-	if (!new_mask)
-		return -EINVAL;
+    new_mask &= cpu_online_map;
+    if (!new_mask)
+        return -EINVAL;
 
-	read_lock(&tasklist_lock);
+    read_lock(&tasklist_lock);
 
-	p = find_process_by_pid(pid);
-	if (!p) {
-		read_unlock(&tasklist_lock);
-		return -ESRCH;
-	}
+    p = find_process_by_pid(pid);
+    if (!p) {
+        read_unlock(&tasklist_lock);
+        return -ESRCH;
+    }
 
-	/*
-	 * It is not safe to call set_cpus_allowed with the
-	 * tasklist_lock held.  We will bump the task_struct's
-	 * usage count and then drop tasklist_lock.
-	 */
-	get_task_struct(p);
-	read_unlock(&tasklist_lock);
+    /*
+     * It is not safe to call set_cpus_allowed with the
+     * tasklist_lock held.  We will bump the task_struct's
+     * usage count and then drop tasklist_lock.
+     */
+    get_task_struct(p);
+    read_unlock(&tasklist_lock);
 
-	if (!capable(CAP_SYS_NICE))
-		new_mask &= p->cpus_allowed_mask;
-	if (capable(CAP_SYS_NICE))
-		p->cpus_allowed_mask |= new_mask;
-	if (!new_mask) {
-		retval = -EINVAL;
-		goto out_unlock;
-	}
+    if (!capable(CAP_SYS_NICE))
+        new_mask &= p->cpus_allowed_mask;
+    if (capable(CAP_SYS_NICE))
+        p->cpus_allowed_mask |= new_mask;
+    if (!new_mask) {
+        retval = -EINVAL;
+        goto out_unlock;
+    }
 
-	retval = -EPERM;
-	if ((current->euid != p->euid) && (current->euid != p->uid) &&
-			!capable(CAP_SYS_NICE))
-		goto out_unlock;
+    retval = -EPERM;
+    if ((current->euid != p->euid) && (current->euid != p->uid) &&
+        !capable(CAP_SYS_NICE))
+        goto out_unlock;
 
-	retval = 0;
-	set_cpus_allowed(p, new_mask);
+    retval = 0;
+    set_cpus_allowed(p, new_mask);
 
-out_unlock:
-	free_task_struct(p);
-	return retval;
+    out_unlock:
+    free_task_struct(p);
+    return retval;
 }
 
 /**
@@ -1471,34 +1475,34 @@ out_unlock:
  * @user_mask_ptr: user-space pointer to hold the current cpu mask
  */
 asmlinkage int sys_sched_getaffinity(pid_t pid, unsigned int len,
-				      unsigned long *user_mask_ptr)
+                                     unsigned long *user_mask_ptr)
 {
-	unsigned int real_len;
-	unsigned long mask;
-	int retval;
-	task_t *p;
+    unsigned int real_len;
+    unsigned long mask;
+    int retval;
+    task_t *p;
 
-	real_len = sizeof(mask);
-	if (len < real_len)
-		return -EINVAL;
+    real_len = sizeof(mask);
+    if (len < real_len)
+        return -EINVAL;
 
-	read_lock(&tasklist_lock);
+    read_lock(&tasklist_lock);
 
-	retval = -ESRCH;
-	p = find_process_by_pid(pid);
-	if (!p)
-		goto out_unlock;
+    retval = -ESRCH;
+    p = find_process_by_pid(pid);
+    if (!p)
+        goto out_unlock;
 
-	retval = 0;
-	mask = p->cpus_allowed & cpu_online_map;
+    retval = 0;
+    mask = p->cpus_allowed & cpu_online_map;
 
-out_unlock:
-	read_unlock(&tasklist_lock);
-	if (retval)
-		return retval;
-	if (copy_to_user(user_mask_ptr, &mask, real_len))
-		return -EFAULT;
-	return real_len;
+    out_unlock:
+    read_unlock(&tasklist_lock);
+    if (retval)
+        return retval;
+    if (copy_to_user(user_mask_ptr, &mask, real_len))
+        return -EFAULT;
+    return real_len;
 }
 
 asmlinkage long sys_sched_yield(void)
@@ -1507,192 +1511,192 @@ asmlinkage long sys_sched_yield(void)
     if(current->policy == SCHED_CHANGEABLE)
         return;
     ///------------hw2------------------///
-	runqueue_t *rq = this_rq_lock();
-	prio_array_t *array = current->array;
-	int i;
+    runqueue_t *rq = this_rq_lock();
+    prio_array_t *array = current->array;
+    int i;
 
-	if (unlikely(rt_task(current))) {
-		list_del(&current->run_list);
-		list_add_tail(&current->run_list, array->queue + current->prio);
-		goto out_unlock;
-	}
+    if (unlikely(rt_task(current))) {
+        list_del(&current->run_list);
+        list_add_tail(&current->run_list, array->queue + current->prio);
+        goto out_unlock;
+    }
 
-	list_del(&current->run_list);
-	if (!list_empty(array->queue + current->prio)) {
-		list_add(&current->run_list, array->queue[current->prio].next);
-		goto out_unlock;
-	}
-	__clear_bit(current->prio, array->bitmap);
+    list_del(&current->run_list);
+    if (!list_empty(array->queue + current->prio)) {
+        list_add(&current->run_list, array->queue[current->prio].next);
+        goto out_unlock;
+    }
+    __clear_bit(current->prio, array->bitmap);
 
-	i = sched_find_first_bit(array->bitmap);
+    i = sched_find_first_bit(array->bitmap);
 
-	if (i == MAX_PRIO || i <= current->prio)
-		i = current->prio;
-	else
-		current->prio = i;
+    if (i == MAX_PRIO || i <= current->prio)
+        i = current->prio;
+    else
+        current->prio = i;
 
-	list_add(&current->run_list, array->queue[i].next);
-	__set_bit(i, array->bitmap);
+    list_add(&current->run_list, array->queue[i].next);
+    __set_bit(i, array->bitmap);
 
-out_unlock:
-	spin_unlock(&rq->lock);
+    out_unlock:
+    spin_unlock(&rq->lock);
 
-	schedule();
+    schedule();
 
-	return 0;
+    return 0;
 }
 
 
 asmlinkage long sys_sched_get_priority_max(int policy)
 {
-	int ret = -EINVAL;
+    int ret = -EINVAL;
 
-	switch (policy) {
-	case SCHED_FIFO:
-	case SCHED_RR:
-		ret = MAX_USER_RT_PRIO-1;
-		break;
-	case SCHED_OTHER:
-		ret = 0;
-		break;
-    case SCHED_CHANGEABLE:
-        ret = 0;
-        break;
-	}
-	return ret;
+    switch (policy) {
+        case SCHED_FIFO:
+        case SCHED_RR:
+            ret = MAX_USER_RT_PRIO-1;
+            break;
+        case SCHED_OTHER:
+            ret = 0;
+            break;
+        case SCHED_CHANGEABLE:
+            ret = 0;
+            break;
+    }
+    return ret;
 }
 
 asmlinkage long sys_sched_get_priority_min(int policy)
 {
-	int ret = -EINVAL;
+    int ret = -EINVAL;
 
-	switch (policy) {
-	case SCHED_FIFO:
-	case SCHED_RR:
-		ret = 1;
-		break;
-    case SCHED_CHANGEABLE:
-        ret = 0;
-        break;
-	case SCHED_OTHER:
-		ret = 0;
-	}
-	return ret;
+    switch (policy) {
+        case SCHED_FIFO:
+        case SCHED_RR:
+            ret = 1;
+            break;
+        case SCHED_CHANGEABLE:
+            ret = 0;
+            break;
+        case SCHED_OTHER:
+            ret = 0;
+    }
+    return ret;
 }
 
 asmlinkage long sys_sched_rr_get_interval(pid_t pid, struct timespec *interval)
 {
-	int retval = -EINVAL;
-	struct timespec t;
-	task_t *p;
+    int retval = -EINVAL;
+    struct timespec t;
+    task_t *p;
 
-	if (pid < 0)
-		goto out_nounlock;
+    if (pid < 0)
+        goto out_nounlock;
 
-	retval = -ESRCH;
-	read_lock(&tasklist_lock);
-	p = find_process_by_pid(pid);
-	if (p)
-		jiffies_to_timespec(p->policy & SCHED_FIFO ?
-					 0 : TASK_TIMESLICE(p), &t);
-	read_unlock(&tasklist_lock);
-	if (p)
-		retval = copy_to_user(interval, &t, sizeof(t)) ? -EFAULT : 0;
-out_nounlock:
-	return retval;
+    retval = -ESRCH;
+    read_lock(&tasklist_lock);
+    p = find_process_by_pid(pid);
+    if (p)
+        jiffies_to_timespec(p->policy & SCHED_FIFO ?
+                            0 : TASK_TIMESLICE(p), &t);
+    read_unlock(&tasklist_lock);
+    if (p)
+        retval = copy_to_user(interval, &t, sizeof(t)) ? -EFAULT : 0;
+    out_nounlock:
+    return retval;
 }
 
 static void show_task(task_t * p)
 {
-	unsigned long free = 0;
-	int state;
-	static const char * stat_nam[] = { "R", "S", "D", "Z", "T", "W" };
+    unsigned long free = 0;
+    int state;
+    static const char * stat_nam[] = { "R", "S", "D", "Z", "T", "W" };
 
-	printk("%-13.13s ", p->comm);
-	state = p->state ? __ffs(p->state) + 1 : 0;
-	if (((unsigned) state) < sizeof(stat_nam)/sizeof(char *))
-		printk(stat_nam[state]);
-	else
-		printk(" ");
+    printk("%-13.13s ", p->comm);
+    state = p->state ? __ffs(p->state) + 1 : 0;
+    if (((unsigned) state) < sizeof(stat_nam)/sizeof(char *))
+        printk(stat_nam[state]);
+    else
+        printk(" ");
 #if (BITS_PER_LONG == 32)
-	if (p == current)
+    if (p == current)
 		printk(" current  ");
 	else
 		printk(" %08lX ", thread_saved_pc(&p->thread));
 #else
-	if (p == current)
-		printk("   current task   ");
-	else
-		printk(" %016lx ", thread_saved_pc(&p->thread));
+    if (p == current)
+        printk("   current task   ");
+    else
+        printk(" %016lx ", thread_saved_pc(&p->thread));
 #endif
-	{
-		unsigned long * n = (unsigned long *) (p+1);
-		while (!*n)
-			n++;
-		free = (unsigned long) n - (unsigned long)(p+1);
-	}
-	printk("%5lu %5d %6d ", free, p->pid, p->p_pptr->pid);
-	if (p->p_cptr)
-		printk("%5d ", p->p_cptr->pid);
-	else
-		printk("      ");
-	if (p->p_ysptr)
-		printk("%7d", p->p_ysptr->pid);
-	else
-		printk("       ");
-	if (p->p_osptr)
-		printk(" %5d", p->p_osptr->pid);
-	else
-		printk("      ");
-	if (!p->mm)
-		printk(" (L-TLB)\n");
-	else
-		printk(" (NOTLB)\n");
+    {
+        unsigned long * n = (unsigned long *) (p+1);
+        while (!*n)
+            n++;
+        free = (unsigned long) n - (unsigned long)(p+1);
+    }
+    printk("%5lu %5d %6d ", free, p->pid, p->p_pptr->pid);
+    if (p->p_cptr)
+        printk("%5d ", p->p_cptr->pid);
+    else
+        printk("      ");
+    if (p->p_ysptr)
+        printk("%7d", p->p_ysptr->pid);
+    else
+        printk("       ");
+    if (p->p_osptr)
+        printk(" %5d", p->p_osptr->pid);
+    else
+        printk("      ");
+    if (!p->mm)
+        printk(" (L-TLB)\n");
+    else
+        printk(" (NOTLB)\n");
 
-	{
-		extern void show_trace_task(task_t *tsk);
-		show_trace_task(p);
-	}
+    {
+        extern void show_trace_task(task_t *tsk);
+        show_trace_task(p);
+    }
 }
 
 char * render_sigset_t(sigset_t *set, char *buffer)
 {
-	int i = _NSIG, x;
-	do {
-		i -= 4, x = 0;
-		if (sigismember(set, i+1)) x |= 1;
-		if (sigismember(set, i+2)) x |= 2;
-		if (sigismember(set, i+3)) x |= 4;
-		if (sigismember(set, i+4)) x |= 8;
-		*buffer++ = (x < 10 ? '0' : 'a' - 10) + x;
-	} while (i >= 4);
-	*buffer = 0;
-	return buffer;
+    int i = _NSIG, x;
+    do {
+        i -= 4, x = 0;
+        if (sigismember(set, i+1)) x |= 1;
+        if (sigismember(set, i+2)) x |= 2;
+        if (sigismember(set, i+3)) x |= 4;
+        if (sigismember(set, i+4)) x |= 8;
+        *buffer++ = (x < 10 ? '0' : 'a' - 10) + x;
+    } while (i >= 4);
+    *buffer = 0;
+    return buffer;
 }
 
 void show_state(void)
 {
-	task_t *p;
+    task_t *p;
 
 #if (BITS_PER_LONG == 32)
-	printk("\n"
+    printk("\n"
 	       "                         free                        sibling\n");
 	printk("  task             PC    stack   pid father child younger older\n");
 #else
-	printk("\n"
-	       "                                 free                        sibling\n");
-	printk("  task                 PC        stack   pid father child younger older\n");
+    printk("\n"
+                   "                                 free                        sibling\n");
+    printk("  task                 PC        stack   pid father child younger older\n");
 #endif
-	read_lock(&tasklist_lock);
-	for_each_task(p) {
-		/*
-		 * reset the NMI-timeout, listing all files on a slow
-		 * console might take alot of time:
-		 */
-		touch_nmi_watchdog();
-		show_task(p);
-	}
-	read_unlock(&tasklist_lock);
+    read_lock(&tasklist_lock);
+    for_each_task(p) {
+        /*
+         * reset the NMI-timeout, listing all files on a slow
+         * console might take alot of time:
+         */
+        touch_nmi_watchdog();
+        show_task(p);
+    }
+    read_unlock(&tasklist_lock);
 }
 
 /*
@@ -1703,17 +1707,17 @@ void show_state(void)
  */
 static inline void double_rq_lock(runqueue_t *rq1, runqueue_t *rq2)
 {
-	if (rq1 == rq2)
-		spin_lock(&rq1->lock);
-	else {
-		if (rq1 < rq2) {
-			spin_lock(&rq1->lock);
-			spin_lock(&rq2->lock);
-		} else {
-			spin_lock(&rq2->lock);
-			spin_lock(&rq1->lock);
-		}
-	}
+    if (rq1 == rq2)
+        spin_lock(&rq1->lock);
+    else {
+        if (rq1 < rq2) {
+            spin_lock(&rq1->lock);
+            spin_lock(&rq2->lock);
+        } else {
+            spin_lock(&rq2->lock);
+            spin_lock(&rq1->lock);
+        }
+    }
 }
 
 /*
@@ -1724,29 +1728,29 @@ static inline void double_rq_lock(runqueue_t *rq1, runqueue_t *rq2)
  */
 static inline void double_rq_unlock(runqueue_t *rq1, runqueue_t *rq2)
 {
-	spin_unlock(&rq1->lock);
-	if (rq1 != rq2)
-		spin_unlock(&rq2->lock);
+    spin_unlock(&rq1->lock);
+    if (rq1 != rq2)
+        spin_unlock(&rq2->lock);
 }
 
 void __init init_idle(task_t *idle, int cpu)
 {
-	runqueue_t *idle_rq = cpu_rq(cpu), *rq = cpu_rq(idle->cpu);
-	unsigned long flags;
+runqueue_t *idle_rq = cpu_rq(cpu), *rq = cpu_rq(idle->cpu);
+unsigned long flags;
 
-	__save_flags(flags);
-	__cli();
-	double_rq_lock(idle_rq, rq);
+__save_flags(flags);
+__cli();
+double_rq_lock(idle_rq, rq);
 
-	idle_rq->curr = idle_rq->idle = idle;
-	deactivate_task(idle, rq);
-	idle->array = NULL;
-	idle->prio = MAX_PRIO;
-	idle->state = TASK_RUNNING;
-	idle->cpu = cpu;
-	double_rq_unlock(idle_rq, rq);
-	set_tsk_need_resched(idle);
-	__restore_flags(flags);
+idle_rq->curr = idle_rq->idle = idle;
+deactivate_task(idle, rq);
+idle->array = NULL;
+idle->prio = MAX_PRIO;
+idle->state = TASK_RUNNING;
+idle->cpu = cpu;
+double_rq_unlock(idle_rq, rq);
+set_tsk_need_resched(idle);
+__restore_flags(flags);
 }
 
 extern void init_timervecs(void);
@@ -1756,47 +1760,47 @@ extern void immediate_bh(void);
 
 void __init sched_init(void)
 {
-	runqueue_t *rq;
-	int i, j, k;
+    runqueue_t *rq;
+    int i, j, k;
 
-	for (i = 0; i < NR_CPUS; i++) {
-		prio_array_t *array;
+    for (i = 0; i < NR_CPUS; i++) {
+        prio_array_t *array;
 
-		rq = cpu_rq(i);
-		rq->active = rq->arrays;
-		rq->expired = rq->arrays + 1;
-		spin_lock_init(&rq->lock);
-		INIT_LIST_HEAD(&rq->migration_queue);
+        rq = cpu_rq(i);
+        rq->active = rq->arrays;
+        rq->expired = rq->arrays + 1;
+        spin_lock_init(&rq->lock);
+        INIT_LIST_HEAD(&rq->migration_queue);
         INIT_LIST_HEAD(&changeables_list);
-		for (j = 0; j < 2; j++) {
-			array = rq->arrays + j;
-			for (k = 0; k < MAX_PRIO; k++) {
-				INIT_LIST_HEAD(array->queue + k);
-				__clear_bit(k, array->bitmap);
-			}
-			// delimiter for bitsearch
-			__set_bit(MAX_PRIO, array->bitmap);
-		}
-	}
-	/*
-	 * We have to do a little magic to get the first
-	 * process right in SMP mode.
-	 */
-	rq = this_rq();
-	rq->curr = current;
-	rq->idle = current;
-	wake_up_process(current);
+        for (j = 0; j < 2; j++) {
+            array = rq->arrays + j;
+            for (k = 0; k < MAX_PRIO; k++) {
+                INIT_LIST_HEAD(array->queue + k);
+                __clear_bit(k, array->bitmap);
+            }
+            // delimiter for bitsearch
+            __set_bit(MAX_PRIO, array->bitmap);
+        }
+    }
+    /*
+     * We have to do a little magic to get the first
+     * process right in SMP mode.
+     */
+    rq = this_rq();
+    rq->curr = current;
+    rq->idle = current;
+    wake_up_process(current);
 
-	init_timervecs();
-	init_bh(TIMER_BH, timer_bh);
-	init_bh(TQUEUE_BH, tqueue_bh);
-	init_bh(IMMEDIATE_BH, immediate_bh);
+    init_timervecs();
+    init_bh(TIMER_BH, timer_bh);
+    init_bh(TQUEUE_BH, tqueue_bh);
+    init_bh(IMMEDIATE_BH, immediate_bh);
 
-	/*
-	 * The boot idle thread does lazy MMU switching as well:
-	 */
-	atomic_inc(&init_mm.mm_count);
-	enter_lazy_tlb(&init_mm, current, smp_processor_id());
+    /*
+     * The boot idle thread does lazy MMU switching as well:
+     */
+    atomic_inc(&init_mm.mm_count);
+    enter_lazy_tlb(&init_mm, current, smp_processor_id());
 }
 
 #if CONFIG_SMP
