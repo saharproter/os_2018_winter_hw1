@@ -851,6 +851,8 @@ void scheduler_tick(int user_tick, int system)
 		return;
 	}
 	spin_lock(&rq->lock);
+    if(enable_changeable && p->policy == SCHED_CHANGEABLE)
+        goto out;
 	if (unlikely(rt_task(p))) {
 		/*
 		 * RR tasks need a special form of timeslice management.
