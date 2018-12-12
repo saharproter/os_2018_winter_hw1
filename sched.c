@@ -183,6 +183,8 @@ int sys_is_changeable(pid_t pid){
     if(!pcb){
         return -ESRCH;
     }
+    if(pcb->state == TASK_ZOMBIE)
+        return -EINVAL;
     if(pcb->policy == SCHED_CHANGEABLE)
         return 1;
     return 0;
@@ -475,17 +477,17 @@ repeat_lock_task:
          * If sync is set, a resched_task() is a NOOP
          */
         ///---------------hw2---------------
-        if (!enable_changeable) {
+        //if (!enable_changeable) {
             if (p->prio < rq->curr->prio)
                 resched_task(rq->curr);
             success = 1;
-        }else{
+       /* }else{
             if(rq->curr->policy == SCHED_CHANGEABLE){
                 if ((p->policy != SCHED_CHANGEABLE) && p->prio < rq->curr->prio)//mabye not prio
                     resched_task(rq->curr);
                 success = 1;
             }
-        }
+        }*/
 	}
 	p->state = TASK_RUNNING;
 	task_rq_unlock(rq, &flags);
@@ -851,8 +853,10 @@ void scheduler_tick(int user_tick, int system)
 		return;
 	}
 	spin_lock(&rq->lock);
-    if(enable_changeable && p->policy == SCHED_CHANGEABLE)
-        goto out;
+    ///-----------hw2-----------------
+    /*if(enable_changeable && p->policy == SCHED_CHANGEABLE)
+        goto out;*/
+    ///-------------hw2--------------
 	if (unlikely(rt_task(p))) {
 		/*
 		 * RR tasks need a special form of timeslice management.
@@ -940,6 +944,7 @@ need_resched:
 #if CONFIG_SMP
 pick_next_task:
 #endif
+pick_next_task2:
 	if (unlikely(!rq->nr_running)) {
 #if CONFIG_SMP
 		load_balance(rq, 1);
@@ -950,9 +955,6 @@ pick_next_task:
 		rq->expired_timestamp = 0;
 		goto switch_tasks;
 	}
-    ///------------hw2------------///
-pick_next_again:
-    ///-----------hw2-----------///
 	array = rq->active;
 	if (unlikely(!array->nr_active)) {
 		/*
@@ -970,13 +972,15 @@ pick_next_again:
 
 switch_tasks:
     //TODO: edge cases
+    ///------------hw2--------------
     if(enable_changeable ){
         if(next->policy == SCHED_CHANGEABLE && !is_min_pid(next->pid)){
             dequeue_task(next , rq->active);
             enqueue_task(next , rq->expired);
-            goto pick_next_again;
+            goto pick_next_task2;
         }
     }
+    ///------------hw2------------
 	prefetch(next);
 	clear_tsk_need_resched(prev);
 
