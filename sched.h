@@ -78,6 +78,11 @@ extern int nr_threads;
 extern int last_pid;
 extern unsigned long nr_running(void);
 extern unsigned long nr_uninterruptible(void);
+///------------hw2-------------
+extern int enable_changeable;	//if changeable policy is on
+extern list_t changeables_list;
+///------------hw2----------
+
 
 #include <linux/fs.h>
 #include <linux/time.h>

@@ -14,8 +14,12 @@ int main(){
 	printf("policy2: %d\n" , get_policy(getpid()));
 	printf("is2: %d\n" , is_changeable(getpid()));
 	printf("change: %d\n" , change(1));
-	printf("policy2: %d\n" , get_policy(getpid()));
-	printf("change: %d\n" , change(0));
-	printf("policy2: %d\n" , get_policy(getpid()));
+	printf("policy3: %d\n" , get_policy(getpid()));
+	/*printf("change2: %d\n" , change(0));
+	printf("policy4: %d\n" , get_policy(getpid()));
+	if(fork()==0){
+		printf("is3: %d\n" , is_changeable(getpid()));
+	}
+	printf("policy pid%d: %d\n" , getpid() , get_policy(getpid()));*/
 	return 0;
 }

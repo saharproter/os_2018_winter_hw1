@@ -1491,7 +1491,7 @@ out_unlock:
 asmlinkage long sys_sched_yield(void)
 {
     ///------------hw2------------------///
-    if(current->policy == SCHED_CHANGEABLES)
+    if(current->policy == SCHED_CHANGEABLE)
         return;
     ///------------hw2------------------///
 	runqueue_t *rq = this_rq_lock();
