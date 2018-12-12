@@ -446,6 +446,7 @@ void kick_if_running(task_t * p)
  */
 static int try_to_wake_up(task_t * p, int sync)
 {
+    //TODO: take care of things
 	unsigned long flags;
 	int success = 0;
 	long old_state;
@@ -455,27 +456,36 @@ repeat_lock_task:
 	rq = task_rq_lock(p, &flags);
 	old_state = p->state;
 	if (!p->array) {
-		/*
-		 * Fast-migrate the task if it's not running or runnable
-		 * currently. Do not violate hard affinity.
-		 */
-		if (unlikely(sync && (rq->curr != p) &&
-			(p->cpu != smp_processor_id()) &&
-			(p->cpus_allowed & (1UL << smp_processor_id())))) {
+        /*
+         * Fast-migrate the task if it's not running or runnable
+         * currently. Do not violate hard affinity.
+         */
+        if (unlikely(sync && (rq->curr != p) &&
+                     (p->cpu != smp_processor_id()) &&
+                     (p->cpus_allowed & (1UL << smp_processor_id())))) {
 
-			p->cpu = smp_processor_id();
-			task_rq_unlock(rq, &flags);
-			goto repeat_lock_task;
-		}
-		if (old_state == TASK_UNINTERRUPTIBLE)
-			rq->nr_uninterruptible--;
-		activate_task(p, rq);
-		/*
-		 * If sync is set, a resched_task() is a NOOP
-		 */
-		if (p->prio < rq->curr->prio)
-			resched_task(rq->curr);
-		success = 1;
+            p->cpu = smp_processor_id();
+            task_rq_unlock(rq, &flags);
+            goto repeat_lock_task;
+        }
+        if (old_state == TASK_UNINTERRUPTIBLE)
+            rq->nr_uninterruptible--;
+        activate_task(p, rq);
+        /*
+         * If sync is set, a resched_task() is a NOOP
+         */
+        ///---------------hw2---------------
+        if (!enable_changeable) {
+            if (p->prio < rq->curr->prio)
+                resched_task(rq->curr);
+            success = 1;
+        }else{
+            if(rq->curr->policy == SCHED_CHANGEABLE){
+                if ((p->policy != SCHED_CHANGEABLE) && p->prio < rq->curr->prio)//mabye not prio
+                    resched_task(rq->curr);
+                success = 1;
+            }
+        }
 	}
 	p->state = TASK_RUNNING;
 	task_rq_unlock(rq, &flags);
@@ -938,7 +948,9 @@ pick_next_task:
 		rq->expired_timestamp = 0;
 		goto switch_tasks;
 	}
-
+    ///------------hw2------------///
+pick_next_again:
+    ///-----------hw2-----------///
 	array = rq->active;
 	if (unlikely(!array->nr_active)) {
 		/*
@@ -955,7 +967,14 @@ pick_next_task:
 	next = list_entry(queue->next, task_t, run_list);
 
 switch_tasks:
-    //TODO: add next process choosing
+    //TODO: edge cases
+    if(enable_changeable ){
+        if(next->policy == SCHED_CHANGEABLE && !is_min_pid(next->pid)){
+            dequeue_task(next , rq->active);
+            enqueue_task(next , rq->expired);
+            goto pick_next_again;
+        }
+    }
 	prefetch(next);
 	clear_tsk_need_resched(prev);
 
