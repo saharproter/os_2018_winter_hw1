@@ -13,7 +13,7 @@ int is_changeable(pid_t pid){
     :"memory"
     );
     if ((res) < 0) {
-        errno = (-res);
+        errno = -(res);
         return -1;
     }
     return res;
@@ -28,7 +28,7 @@ int make_changeable(pid_t pid){
     :"memory"
     );
     if ((res) < 0) {
-        errno = (-res);
+        errno = -(res);
         return -1;
     }
     return res;
@@ -43,7 +43,7 @@ int change(int val){
     :"memory"
     );
     if ((res) < 0) {
-        errno = (-res);
+        errno = -(res);
         return -1;
     }
     return res;
@@ -58,7 +58,7 @@ int get_policy(pid_t pid){
     :"memory"
     );
     if ((res) < 0) {
-        errno = (-res);
+        errno = -(res);
         return -1;
     }
     return res;
