@@ -169,6 +169,7 @@ static struct runqueue runqueues[NR_CPUS] __cacheline_aligned;
 
 int enable_changeable = 0;	//if changeable policy is on
 list_t changeables_list;
+int num_changeables = 0;
 
 
 /*
@@ -194,12 +195,15 @@ int sys_make_changeable(pid_t pid){
 
     task_t* pcb = find_task_by_pid(pid);
     if(!pcb){
+        spin_unlock_irq(rq);
         return -ESRCH;
     }
     if(current->policy == SCHED_CHANGEABLE || sys_is_changeable(pid)){
+        spin_unlock_irq(rq);
         return -EINVAL;
     }
     pcb->policy = SCHED_CHANGEABLE;
+    num_changeables++;
     //insert pid to changeables pid list
     if(pcb->state == TASK_RUNNING)
         list_add_tail(&pcb->run_list_sc , &(changeables_list));
@@ -229,8 +233,14 @@ int sys_change(int val){
     runqueue_t *rq=this_rq();
     spin_lock_irq(rq);
 
-    if(val != 1 && val != 0)
+    if(val != 1 && val != 0) {
+        spin_unlock_irq(rq);
         return -EINVAL;
+    }
+    if(!num_changeables) {
+        spin_unlock_irq(rq);
+        return 0;
+    }
     if(val == 1)
         enable_changeable = 1;
     else
@@ -516,15 +526,15 @@ static int try_to_wake_up(task_t * p, int sync)
                 resched_task(rq->curr);
             success = 1;
         }else{
-            if(rq->curr->policy == SCHED_CHANGEABLE && p->policy == SCHED_CHANGEABLE){
-                if(p->pid < rq->curr->pid)
-                    resched_task(rq->curr);
-                success = 1;
-            }
-            if(rq->curr->policy == SCHED_CHANGEABLE){
-                if ((p->policy != SCHED_CHANGEABLE) && p->prio < rq->curr->prio)//mabye not prio
-                    resched_task(rq->curr);
-                success = 1;
+                if(rq->curr->policy == SCHED_CHANGEABLE && p->policy == SCHED_CHANGEABLE){
+                    if(p->pid < rq->curr->pid)
+                        resched_task(rq->curr);
+                    success = 1;
+                }
+                if(rq->curr->policy == SCHED_CHANGEABLE){
+                    if ((p->policy != SCHED_CHANGEABLE) && p->prio < rq->curr->prio)//mabye not prio
+                        resched_task(rq->curr);
+                    success = 1;
             }
         }
     }
@@ -555,6 +565,8 @@ void wake_up_forked_process(task_t * p)
         p->prio = effective_prio(p);
     }
     p->cpu = smp_processor_id();
+    if(p->policy == SCHED_CHANGEABLE)
+        num_changeables++;
     activate_task(p, rq);
 
     rq_unlock(rq);
@@ -893,7 +905,7 @@ void scheduler_tick(int user_tick, int system)
     }
     spin_lock(&rq->lock);
     ///-----------hw2------------------
-    if(enable_changeable && p->policy == SCHED_CHANGEABLE && !list_empty(&changeables_list))
+    if(enable_changeable && p->policy == SCHED_CHANGEABLE && num_changeables>1)
         goto out;
     ///------------hw2------------
     if (unlikely(rt_task(p))) {
@@ -1008,9 +1020,7 @@ asmlinkage void schedule(void)
     idx = sched_find_first_bit(array->bitmap);
     queue = array->queue + idx;
     next = list_entry(queue->next, task_t, run_list);
-
-    switch_tasks:
-    //TODO: edge cases
+//TODO: edge cases
     ///---------------hw2-----------------
     if(enable_changeable ){
         if(next->policy == SCHED_CHANGEABLE && !is_min_pid(next->pid)){
@@ -1023,6 +1033,7 @@ asmlinkage void schedule(void)
         }
     }
     ///----------------hw2-------------
+    switch_tasks:
     prefetch(next);
     clear_tsk_need_resched(prev);
 
