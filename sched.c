@@ -202,23 +202,19 @@ int sys_make_changeable(pid_t pid){
         spin_unlock_irq(rq);
         return -EINVAL;
     }
+    if(rt_task(current)){
+        spin_unlock_irq(rq);
+        return -1;
+    }
     pcb->policy = SCHED_CHANGEABLE;
     num_changeables++;
     //insert pid to changeables pid list
     if(pcb->state == TASK_RUNNING)
         list_add_tail(&pcb->run_list_sc , &(changeables_list));
     //TODO: take care of edge cases
+
     if(enable_changeable && current == pcb) {
-        struct list_head *pos, *q;
-        task_t *tmp;
-        pid_t min = pid;
-        list_for_each_safe(pos, q, &changeables_list)
-        {
-            tmp = list_entry(pos, task_t, run_list_sc);
-            if (min > tmp->pid)
-                min = tmp->pid;
-        }
-        if (min < current->pid) {
+        if (!is_min_pid(current->pid)) {
             dequeue_task(current, rq->active);
             enqueue_task(current, rq->expired);
             set_tsk_need_resched(current);
@@ -246,16 +242,8 @@ int sys_change(int val){
     else
         enable_changeable = 0;
     //TODO: take care of edge cases
-    struct list_head *pos, *q;
-    task_t *tmp;
-    pid_t min = current->pid;
-    list_for_each_safe(pos, q, &changeables_list)
-    {
-        tmp = list_entry(pos, task_t, run_list_sc);
-        if (min > tmp->pid)
-            min = tmp->pid;
-    }
-    if (min < current->pid) {
+
+    if (!is_min_pid(current->pid)) {
         dequeue_task(current, rq->active);
         enqueue_task(current, rq->expired);
         set_tsk_need_resched(current);
@@ -277,15 +265,15 @@ int sys_get_policy(pid_t pid){
 }
 
 int is_min_pid(pid_t pid){
-    struct list_head *pos, *q;
+    struct list_head *pos;
     task_t* tmp;
-    pid_t min = pid;
-    list_for_each_safe(pos, q,  &changeables_list){
+    int min = pid;
+    list_for_each(pos,  &changeables_list){
         tmp = list_entry(pos, task_t, run_list_sc);
         if(min > tmp->pid && tmp->state== TASK_RUNNING)
             min = tmp->pid;
     }
-    return (pid == min);
+    return (min == pid);
 }
 
 ///-----------hw2----------///////
@@ -521,21 +509,19 @@ static int try_to_wake_up(task_t * p, int sync)
          * If sync is set, a resched_task() is a NOOP
          */
         ///---------------hw2---------------
-        if (!enable_changeable) {
+        if (!enable_changeable || rq->curr->policy!=SCHED_CHANGEABLE) {
             if (p->prio < rq->curr->prio)
                 resched_task(rq->curr);
             success = 1;
         }else{
-                if(rq->curr->policy == SCHED_CHANGEABLE && p->policy == SCHED_CHANGEABLE){
-                    if(p->pid < rq->curr->pid)
-                        resched_task(rq->curr);
-                    success = 1;
-                }
-                if(rq->curr->policy == SCHED_CHANGEABLE){
-                    if ((p->policy != SCHED_CHANGEABLE) && p->prio < rq->curr->prio)//mabye not prio
-                        resched_task(rq->curr);
-                    success = 1;
+            if(rq->curr->policy == SCHED_CHANGEABLE && p->policy == SCHED_CHANGEABLE){
+                if(p->pid < rq->curr->pid)
+                    resched_task(rq->curr);
+                success = 1;
             }
+            if (rq->curr->policy == SCHED_CHANGEABLE && p->policy != SCHED_CHANGEABLE && p->prio < rq->curr->prio)
+                resched_task(rq->curr);
+            success = 1;
         }
     }
     p->state = TASK_RUNNING;
