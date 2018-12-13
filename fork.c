@@ -730,7 +730,7 @@ int do_fork(unsigned long clone_flags, unsigned long stack_start,
         p->policy = SCHED_CHANGEABLE;
         p->time_slice = (current->time_slice) >> 1 + current->time_slice % 2;
         //add new changeable process to changeables list
-        list_add_tail(&p->run_list_sc , &(changeables_list));
+        //list_add_tail(&p->run_list_sc , &(changeables_list));
     }
     else{
         p->time_slice = (current->time_slice + 1) >> 1;
